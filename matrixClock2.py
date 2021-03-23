@@ -4,7 +4,7 @@
 
 # Version 3.1 - initial use of git repo
 
-VERSION={"MAJOR": 3, "MINOR": 9}
+VERSION={"MAJOR": 3, "MINOR": 2}
 verstr = '{}.{}'.format(VERSION['MAJOR'], VERSION['MINOR'])
 
 import gc
@@ -15,28 +15,15 @@ import digitalio
 import json
 import displayio
 import neopixel
-import microcontroller
 import sys
 import supervisor
 import adafruit_lis3dh
 import adafruit_ds3231
-# from adafruit_esp32spi import adafruit_esp32spi
-# from adafruit_esp32spi import adafruit_esp32spi_wifimanager
-# from rtc import RTC
 from adafruit_display_text.label import Label
 from adafruit_bitmap_font import bitmap_font
 from adafruit_matrixportal.matrix import Matrix
 
 LOGGING_AVAILABLE = False
-
-
-# # Get wifi details and timezone from the secrets.py file
-# try:
-    # from secrets import secrets
-# except ImportError:
-    # print("WiFi secrets are kept in secrets.py, please add them there!")
-    # raise
-    
 
 # Setup color constants
 def make_rgb_color(color):
@@ -127,133 +114,13 @@ class Button:
         self.prev_val = val
         return (pressed, pressed_time)
         
-# # Class to handle the Matrix Portal's buttons
-# # Here each button is coded to cycle through a list of options
-# class Buttons:
-
-    # class Button:
-        # def __init__(self, pin, data):
-            # self.button = digitalio.DigitalInOut(pin)
-            # self.button.direction = digitalio.Direction.INPUT
-            # self.button.pull = digitalio.Pull.UP
-            
-            # self.data = data
-            # self.cycle = 0
-            
-            # # Set the value of self.cycle that corresponds to the
-            # # default settings of color and dim, and blink and center
-            # self.set_cycle()
-            
-            # self.prev_value = True
-        
-        # # Update this button to match the default options
-        # def set_cycle(self):
-            # self.cycle = len(self.data) - 1
-            # while self.cycle >= 0:
-                # vals = self.data[self.cycle]
-                # match = True
-                # for key, val in vals:
-                    # v = options.get(key)
-                    # if v != val:
-                        # match = False
-                # if match:
-                    # break
-                # self.cycle -= 1
-            # if self.cycle < 0:
-                # print("Invalid combination of options when setting up button")
-        
-        # # Update the options object with the options associated with this button
-        # def update_options(self):
-            # vals = self.data[self.cycle]
-            # for key, val in vals:
-                # options.replace(key, val)
-        
-        # # Read the state of the button and detect if pressed since last read    
-        # def read(self):
-            # pressed = False
-            # new_value = self.button.value
-            
-            # if self.prev_value and not new_value:
-                # pressed = True
-                # self.cycle += 1
-                # if self.cycle >= len(self.data):
-                    # self.cycle = 0
-                
-                # self.update_options()    
-                    
-            # self.prev_value = new_value
-            # return pressed
-                    
-
-    # def __init__(self):
-
-        # self.buttons = []
-        
-        # # The UP button is the color button
-        # # data = ((('color', 'track'), ('dim', True)),  \
-        # data = ((('color', 'track'), ),               \
-                # (('color', 'red'),   ('dim', True)),  \
-                # (('color', 'red'),   ('dim', False)), \
-                # (('color', 'green'), ('dim', True)),  \
-                # (('color', 'green'), ('dim', False)))                
-        # self.color_button = Buttons.Button(board.BUTTON_UP, data)
-        # self.buttons.append(self.color_button)
-        
-        # # The DOWN button is the format button
-        # data = ((('blink', True),  ('center', True)),  \
-                # (('blink', True),  ('center', False)), \
-                # (('blink', False), ('center', True)),  \
-                # (('blink', False), ('center', False)))        
-        # self.format_button = Buttons.Button(board.BUTTON_DOWN, data)
-        # self.buttons.append(self.format_button)
-            
-    # # Read the state of the buttons        
-    # def read(self):
-        # for button in self.buttons:
-            # button.read()
-
 # Class to display and keep track of the time
 class TimeKeeper:
     BASEURL = 'http://worldtimeapi.org/api/'
-    # EXPECTED_ERROR = "Failed to send 3 bytes (sent 0)"
-    # TEST_RESP = []
-    # TEST_RESP = ['{"datetime":"2020-11-01T09:26:34.618465-06:00","dst":true}',
-                 # '{"datetime":"2020-11-01T09:30:34.618444-06:00","dst":true}',
-                 # '{"datetime":"2020-11-01T08:35:34.618444-06:00","dst":false}',
-                 # '{"datetime":"2020-11-01T08:40:34.618444-06:00","dst":false}',
-                 # '{"datetime":"2020-11-01T09:45:34.618444-06:00","dst":true}',
-                 # '{"datetime":"2020-11-01T09:50:34.618444-06:00","dst":true}']
      
-    # def __init__(self, tz=None):
     def __init__(self):
         global LOGGING_AVAILABLE
-        # self.correction_factor = 0
-        # self.correction_base = 0
-        # self.prev_hour = 0
-        # self.prev_minute = 0
-        # self.show_pending_update = False
-        # self.internet_correction = False
-        # self.internet_setup = True
-        # self.minute_change = False
-        # self.correction_interval_min = None
-        # self.accumulated_minutes = None
-        # self.actual_last_interval = None
-        # self.correction_armed = False
-        # self.correction_trigger = False
-        # self.next_mono_ms = time.monotonic_ns() // (10**6) + 500
         self.blink_colon = True
-        # self.web_fudge = 2
-        # self.use_fudgemax = ' '
-        # self.correction_countdown = 0
-        # self.wifi_fail_count = 0
-        # self.unsupported_count = 0
-        # self.no_sockets_count = 0
-        # self.memory_allocation_failed_count = 0
-        # self.socket_object_count = 0
-        # self.max_wifi_fail = 6
-        # self.exception_text = None
-        # self.exception_value = None
-        # self.last_response_data = None
         self.ds3231 = None
         self.was_dst = None
         self.dst_offset = 0
@@ -264,16 +131,7 @@ class TimeKeeper:
         
         self.local_time_secs = 0
 
-        # self.set_tz(tz)
-            
-        # self.failed_to_send_count = 0
-        # self.waiting_for_SPI_char_count = 0
-        
         LOGGING_AVAILABLE = True
-        
-        # self.log_message("Connecting to   {}".format(secrets["ssid"]))
-        # wifi.connect()
-        # self.log_esp_info()
         
         self._initialize_ds3231()
         self.sqw = digitalio.DigitalInOut(board.A1)
@@ -283,43 +141,7 @@ class TimeKeeper:
         
         self.log_message("Version   {}".format(verstr))
 
-        # # initial interval five minutes to get a correction factor
-        # self.reset_interval(new_interval=options.get('interval'), one_time_interval=5)
-    
-    # # setup the timezone 
-    # #  values of tz parameter can be:  None, 'secrets', or a timezone string; like 'America/Chicago'  
-    # #  None implies using the ip address (of the ISP modem) to determine the location  
-    # def set_tz(self, tz):
-        # self.timezone = tz
-        # if tz == 'secrets':
-            # if tz in secrets:
-                # self.timezone = secrets['timezone']
-            # else:
-                # # not in secrets, change to use IP address
-                # self.timezone = None
-                
-        # if self.timezone is None:        
-            # self.url = TimeKeeper.BASEURL + 'ip'
-        # else:
-            # self.url = TimeKeeper.BASEURL + 'timezone/' + self.timezone
-            
-        # self.timezone_change = True
-        
-    # # fudge is the time correction for web turnaround time
-    # @property
-    # def fudge(self):
-        # return self.web_fudge
-        
-    # @fudge.setter
-    # def fudge(self, val):
-        # self.web_fudge = val
-        # self.use_fudgemax = ' '
-        # fudgemax = options.get('fudgemax')
-        # if self.web_fudge > fudgemax:
-            # self.web_fudge = fudgemax
-            # self.use_fudgemax = '*'
-
-    # Log WiFi requests to wifi_log.txt on the CIRCUITPY filesystem
+    # Log messages to message_log.txt on the CIRCUITPY filesystem
     def log_message(self, text, do_print=True, add_time=True, traceback=False, exception_value=None):
         global LOGGING_AVAILABLE
         if add_time:
@@ -333,7 +155,7 @@ class TimeKeeper:
         if LOGGING_AVAILABLE and options.get('logging'):
             try:
                 try:
-                    with open("/wifi_log.txt", "a") as wf:
+                    with open("/message_log.txt", "a") as wf:
                         wf.write(text + "\n")
                         if traceback:
                             sys.print_exception(exception_value, wf)
@@ -353,7 +175,7 @@ class TimeKeeper:
                 options.replace('logging', False)
                 self.log_message("Unexpected exception while logging - logging disabled")
 
-    # Initialize ds3231 if available
+    # Initialize ds3231
     def _initialize_ds3231(self):
         # Check for ds3231 RTC
         detected = False
@@ -361,30 +183,36 @@ class TimeKeeper:
             pass
         for x in i2c.scan():
             if x == 0x68:
-                # self.log_message("ds3231 RTC detected")
                 detected = True
                 break
         i2c.unlock()
         if detected:
             self.ds3231 = adafruit_ds3231.DS3231(i2c)
             self.ds3231.set_1Hz_SQW()
+            self.local_time_secs = time.mktime(self.ds3231.datetime)
         else:
             self.log_message("ds3231 RTC not found")
             exit()
         
     # Format ds3231 data
     def format_ds3231(self):
-        if self.ds3231:
-            dsts = self.ds3231.datetime
-            # inttime = self.get_corrected_time_sec(time.time())
-            dstime = time.mktime(dsts)
-            # delta = dstime - inttime
-            return "{} {}  (power lost {}) (SQW mode {})".format(self.get_formatted_date(dstime), self.get_formatted_time(dstime), self.ds3231.power_lost, not self.ds3231.int_sqw)
-        return "Not Available"
+        dstime = time.mktime(self.ds3231.datetime)
+        return "{} {}  (power lost={}) ".format(self.get_formatted_date(dstime), self.get_formatted_time(dstime), self.ds3231.power_lost)
 
     def update_ds3231(self, val):
-        if self.ds3231:
-            try:
+        try:
+            if isinstance(val, int):
+                secs = time.mktime(self.ds3231.datetime_at_second_boundary)
+                self.ds3231.datetime = time.localtime(secs+val)
+            elif val == 'nearest':
+                dt = self.ds3231.datetime
+                secs = time.mktime(dt)
+                sec = dt[5]
+                secs -= sec
+                if sec > 30:
+                    secs += 60
+                self.ds3231.datetime = time.localtime(secs)
+            else:
                 dt = val.split(' ')
                 ymd = dt[0].split('/')
                 hms = dt[1].split(':')
@@ -395,89 +223,16 @@ class TimeKeeper:
                 mn = int(hms[1])
                 sec = int(hms[2])
                 self.ds3231.datetime = time.struct_time(year, mon, day, hour, mn, sec, 0, -1, -1 )
-            except:
-                return "Invalid date/time"
-        return None
-
-    # def log_esp_info(self):
-        # self.log_message("Connected to   {}    Signal strength: {} dBm".format(esp.ssid.decode(), esp.rssi))
-        # self.log_message("ESP Firmware:  {}".format(esp.firmware_version.decode()))
-        # self.log_message("ESP Status:    {}".format(esp.status))
-        # ma = esp.MAC_address
-        # self.log_message("ESP MAC addr:  {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}".format(ma[5], ma[4], ma[3], ma[2], ma[1], ma[0]))        
-        # bs = esp.bssid
-        # self.log_message("bssid:         {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}".format(bs[5], bs[4], bs[3], bs[2], bs[1], bs[0]))
-        # nd = esp.network_data
-        # self.log_message("IP:            {}".format(esp.pretty_ip(nd['ip_addr'])))
-        # self.log_message("gateway:       {}".format(esp.pretty_ip(nd['gateway'])))
-        # self.log_message("netmask:       {}".format(esp.pretty_ip(nd['netmask'])))
+            self.local_time_secs = time.mktime(self.ds3231.datetime)
+        except:
+            return "Invalid date/time"
 
     def _initialize_time(self):
-        dsts = self.ds3231.datetime
-        self.local_time_secs = time.mktime(dsts)
-
-    # # Initialize the internal clock from the internet   
-    # def _initialize_time(self):
-        # new_time = None
-        # init_count = 0
-        # while new_time is None and init_count < 5:
-            # new_time = self._get_internet_time()
-            # if new_time is None:
-                # init_count += 1
-                # time.sleep(1)
-
-        # if new_time != None:
-            # RTC().datetime = time.localtime(new_time)
-        # self.correction_base = time.time()
-        # self.correction_factor = 0
-        # self._update_monotonic_ms()
-    
-    # Get the time from the internet   
-    # def _get_internet_time(self):
-        # new_time = None
-        # self.exception_text = None
-        # self.last_response_data = None
-        # try:
-            # full_json = None
-            # try:
-                # time1 = time.time()
-                # self.last_response_data = TimeKeeper.TEST_RESP.pop(0)
-                # time2 = time.time()
-            # except:
-                # pass
-            # if not self.last_response_data:
-                # time1 = time.time()
-                # response = wifi.get(self.url)
-                # time2 = time.time()
-                # response.drop_connection_when_closed = True
-                # self.last_response_data = response.text
-                # response.close()
-                # response = None
-            # full_json = json.loads(self.last_response_data)
-            # time_struct = self._parse_time(full_json["datetime"], full_json["dst"])
-            # self.timezone = full_json["timezone"]
-            # self.last_timezone = self.timezone
-            # new_time = time.mktime(time_struct)
-            # time3 = time.time()
-            # fudge = int(round((time3 - time2) + ((2/3) * (time2 - time1))))
-            # self.fudge = fudge
-            # new_time += fudge
-        # except Exception as e:
-            # self.exception_value = e
-            # self.exception_text = str(e)
-            
-        # return new_time
-        
-    # Correct the internal time using a previously computed
-    # correction factor.  Return the corrected EPOCH time
-    # def get_corrected_time_sec(self, cur_time):
-        # delta_time = cur_time - self.correction_base
-        # return cur_time + int(round(delta_time * self.correction_factor))
+        self.local_time_secs = time.mktime(self.ds3231.datetime)
 
     def get_formatted_time(self, timeis=None):
         if not timeis:
             timeis = self.local_time_secs
-            # timeis = self.get_corrected_time_sec(time.time())
         ts = time.localtime(timeis)
         fmt = "{:2d}:{:02d}:{:02d}".format(ts.tm_hour, ts.tm_min, ts.tm_sec)
         return fmt
@@ -485,185 +240,13 @@ class TimeKeeper:
     def get_formatted_date(self, timeis=None):
         if not timeis:
             timeis = self.local_time_secs
-            # timeis = self.get_corrected_time_sec(time.time())
         ts = time.localtime(timeis)
         fmt = "{:2d}/{:02d}/{}".format(ts.tm_mon, ts.tm_mday, ts.tm_year)
         return fmt
         
-    # # Calculate a correction factor to be used to correct
-    # # the internal clock until the next correction from the internet
-    # def _calculate_correction(self, new_time, old_time):
-        # self.correction_base = new_time
-        # if self.timezone_change:
-            # self.timezone_change = False
-            # self.log_message("Time Zone changed, correction factor remains: {}".format(self.correction_factor))
-        # else:
-            # difference = new_time - old_time + self.dst_offset
-            # self.correction_factor = difference / (self.actual_last_interval * 60)
-            # self.log_message("Calculated correction from last {} minutes: {:+d} seconds, factor: {}".format(self.actual_last_interval, difference, self.correction_factor))
-
-    # # Correct the internal clock from the internet
-    # # and compute the on-going correction factor
-    # def correct_from_internet(self):
-        # # self.show_pending_update = True
-        # self.update_display()
-        # new_time = self._get_internet_time()
-        
-        # if new_time is not None:
-            # old_time = time.time()
-            # RTC().datetime = time.localtime(new_time)
-            # self._calculate_correction(new_time, old_time)
-            # self.internet_correction = True
-            # self._update_monotonic_ms()       
-            # self.reset_interval()     
-            # self.wifi_fail_count = 0
-        # else:
-            # self.wifi_fail_count += 1
-            # do_traceback = False
-            # if 'memory allocation failed' in self.exception_text:
-                # self.log_message("Memory Allocattion failed - available {}".format(gc.mem_free()))
-                # self.memory_allocation_failed_count += 1
-                # if self.memory_allocation_failed_count <= 1:
-                    # do_traceback = True
-            # if 'socket object' in self.exception_text:
-                # self.socket_object_count += 1
-                # if self.socket_object_count <= 1:
-                    # do_traceback = True
-                # elif self.socket_object_count > 3:
-                    # supervisor.reload()
-            # if self.exception_text == "Timed out waiting for SPI char":
-                # self.waiting_for_SPI_char_count += 1
-                # if self.waiting_for_SPI_char_count <= 1:
-                    # do_traceback = True
-            # if self.exception_text == "unsupported types for __gt__: 'NoneType', 'int'":
-                # self.unsupported_count += 1
-                # if self.unsupported_count <= 1:
-                    # do_traceback = True
-            # if self.exception_text == "No sockets available":
-                # self.no_sockets_count += 1
-                # if self.no_sockets_count <= 1:
-                    # do_traceback = True
-            # if self.exception_text == "syntax error in JSON":
-                # if 'application-error.html' not in self.last_response_data:
-                    # do_traceback = True
-                
-            # if self.exception_text == "datetime":
-                # # we got a response, but it wasn't what we expected and json raised this exception
-                # # it could be an 'application error' page from worldtimeapi
-                # # or it could be a bad time zone specified
-                # try:
-                    # full_json = json.loads(self.last_response_data)
-                    # err = full_json['error']
-                    # if err == 'unknown location':
-                        # # must be a bad timezone specification
-                        # # lets set the timezone to None, so we will use the 'ip' interface
-                        # print("Bad timezone - Resetting timezone to last valid")
-                        # options.replace('timezone', self.last_timezone)
-                        # self.wifi_fail_count = 0
-                        # return
-                # except:
-                    # pass
-                
-            # self.log_message("Request to {} failed ({})".format(self.url, self.wifi_fail_count))
-            # self.log_message("Exception text: {}".format(self.exception_text), traceback=do_traceback)
-            
-            # if self.exception_text == 'syntax error in JSON':
-                # # This could be a problem at the server
-                # # lets try again in five minutes
-                # if 'application-error.html' in self.last_response_data:
-                    # self.last_response_data = "Server application error - retry in 5 minutes"
-                # self.reset_interval(one_time_interval=5)
-# #                return
-                
-            # if self.exception_text == "No sockets available":
-                # # force reset now
-                # self.wifi_fail_count = self.max_wifi_fail
-            
-            # if self.last_response_data:
-                # self.log_message("Last response: {}".format(self.last_response_data))
-                
-            # if self.wifi_fail_count >= self.max_wifi_fail:
-                # self.log_message("Resetting the ESP32")
-                # wifi.reset()
-                # self.log_message("Reconnecting to {}".format(secrets["ssid"]))
-                # wifi.connect()
-
-                # self.log_esp_info()
-
-                # self.wifi_fail_count = 0
-                # # wait a minute before trying again
-                # self.reset_interval(one_time_interval=1)
-
-    # def reset_interval(self, *, new_interval=None, one_time_interval=None):
-        # if new_interval:
-            # self.correction_interval_min = new_interval
-            
-        # if one_time_interval:
-            # self.accumulated_minutes = one_time_interval
-            # self.actual_last_interval = one_time_interval
-        # else:
-            # self.accumulated_minutes = self.correction_interval_min
-            # self.actual_last_interval = self.correction_interval_min
-        # self.correction_armed = False
-        # self.correction_trigger = False
-    
-    # def _update_monotonic_ms(self): 
-        # self.base_mono_ms = time.monotonic_ns() // (10**6)
-        # self.next_mono_ms = self.base_mono_ms + 500 + int(round(500 * self.correction_factor))
-    
-    # @property    
-    # def time_for_display_update(self):
-        # current_mono_ms = time.monotonic_ns() // (10**6)
-        # delta = current_mono_ms - self.base_mono_ms
-        # corrected_mono_ms = current_mono_ms + int(round(delta * self.correction_factor))
-        # if corrected_mono_ms >= self.next_mono_ms:
-            # # set so another update occurs 500 ms from now
-            # self.next_mono_ms += 500 + int(round(500 * self.correction_factor))
-            # # indicate to update the display
-            # return True
-        # return False
-
-    # @property
-    # def time_for_correction(self):
-        # return self.correction_trigger or self.timezone_change
-        
-    # @property
-    # def minute_changed(self):
-        # change = self.minute_change
-        # self.minute_change = False
-        # return change
-
-    # def _parse_time(self, timestring, is_dst=-1):
-        # """ Given a string of the format YYYY-MM-DDTHH:MM:SS.SS-HH:MM (and
-            # optionally a DST flag), convert to and return an equivalent
-            # time.struct_time 
-        # """
-        # if self.was_dst and not is_dst:
-            # # end of daylight time
-            # self.dst_offset = 3600
-        # elif is_dst and not self.was_dst:
-            # # start of daylight time
-            # self.dst_offset = -3600
-        # else:
-            # self.dst_offset = 0
-        # self.was_dst = is_dst
-        
-        # date_time = timestring.split('T')         # Separate into date and time
-        # year_month_day = date_time[0].split('-')  # Separate time into Y/M/D
-        # hour_minute_second = date_time[1].split('+')[0].split('-')[0].split(':')
-        
-        # return time.struct_time(int(year_month_day[0]),
-                                # int(year_month_day[1]),
-                                # int(year_month_day[2]),
-                                # int(hour_minute_second[0]),
-                                # int(hour_minute_second[1]),
-                                # int(hour_minute_second[2].split('.')[0]),
-                                # -1, -1, is_dst)
-
     # Update the time display
     def update_display(self):
     
-        # now = time.localtime(self.get_corrected_time_sec(time.time()))
         now = time.localtime(self.local_time_secs)
     
         hours = now[3]
@@ -680,10 +263,6 @@ class TimeKeeper:
         hour_label.color = color_option
         min_label.color = color_option
         colon_label.color = color_option
-        # if self.show_pending_update:
-            # colon_label.color = RGB_DIM_AMBER
-        # else:
-            # colon_label.color = color_option
 
         # Handle AM/PM
         show_ampm = options.get('ampm')
@@ -703,52 +282,12 @@ class TimeKeeper:
             show_ampm = False
             bitmap_palette[1] = RGB_BLACK
 
-        # if self.internet_setup:
-            # self.log_message("Clock set to:         {:2d}:{:02d},  fudge factor = {:+d}{}".format(hours, minutes, self.web_fudge, self.use_fudgemax))
-            # self.internet_setup = False
-    
-        # if self.internet_correction:
-            
-            # self.log_message("Internet Correction:  {:2d}:{:02d} --> {:2d}:{:02d},  fudge factor = {:+d}{}  ds3231: {}, free memory {}".format(self.prev_hour, self.prev_minute, hours, minutes, self.web_fudge, self.use_fudgemax, self.format_ds3231(), gc.mem_free()))
-            # self.internet_correction = False
-            # self.show_pending_update = False
-    
-        # if (hours == self.prev_hour and minutes == (self.prev_minute - 1)) or \
-           # (hours == (self.prev_hour - 1) and minutes == 59 and self.prev_minute == 0) or \
-           # (hours == 12 and self.prev_hour == 1 and minutes == 59 and self.prev_minute == 0) or \
-           # (hours == 23 and self.prev_hour == 0 and minutes == 59 and self.prev_minute == 0):
-            # self.log_message("Clock went backward!")
-            # self.log_message("           Previous  {}:{:02d}".format(self.prev_hour, self.prev_minute), add_time=False)
-            # self.log_message("           Now       {}:{:02d}".format(hours, minutes), add_time=False)
-            
-        # if self.correction_armed:
-            # self.correction_countdown -= 1
-            # if self.correction_countdown <= 0:
-                # self.correction_trigger = True
-        
-        # When the correction interval has expired, set 'armed' and 
-        # setup a counter to wait 30 seconds before 'triggering' the
-        # correction    
-        # if self.prev_minute != minutes:
-            # self.minute_change = True
-            # self.accumulated_minutes -= 1
-            # if self.accumulated_minutes <= 0 and not self.correction_armed:
-                # self.correction_armed = True
-                # self.correction_countdown = 60
-        # else:
-            # self.minute_change = False
-    
-        # self.prev_hour = hours
-        # self.prev_minute = minutes
-    
         blink = options.get('blink')
         center = options.get('center')
         
         colon = ":"
-        # if blink and not self.show_pending_update:
         if blink:
-            # self.blink_colon = not self.blink_colon
-            # if self.blink_colon:
+            # blink the colon
             if self.sqw.value:
                 colon = " "
     
@@ -860,19 +399,6 @@ class Command:
             
         return (False, None)
 
-    # # validate timezone parameter
-    # def testTimezone(val):
-        # if val == 'secrets':
-            # try:
-                # _ = secrets['timezone']
-                # return (True, val)
-            # except:
-                # return (False, None)
-        # if val is '' or val == 'none':
-            # return (True, None)
-        # return (True, val)
-        
-    
 class Options:
     DEFAULT_FILE = 'defaults.json'
     
@@ -903,10 +429,6 @@ class Options:
 
     # Replace an option's value
     def replace(self, key, val, show=True):
-        # if key == 'ds3231':
-            # print("Options.replace called with key=ds3231")
-            # alternate = time_keeper.update_ds3231(val)
-        # else:
         if key != 'logging' or val is False or LOGGING_AVAILABLE:
             item = self.commands[key]
             item[1] = val
@@ -939,13 +461,29 @@ class Options:
 
     def ds3231(self, key, val, show=True):
         alternate = None
-        if val == 'set':
-            cur_time = time_keeper.get_corrected_time_sec(time.time())
-            time_keeper.ds3231.datetime = time.localtime(cur_time)
-        elif val:
-            alternate = time_keeper.update_ds3231(val)
+        val = val.strip()
+        if val:
+            # val can be 'nearest', '+xxx', '-xxx' (where xxx is sec[ond], min[ute], h[ou]r) or 'mm/dd/yyyy hh:mm:ss'
+            
+            if val[0] == '+' or val[0] == '-':
+                direction = +1 if val[0] == '+' else -1
+                unit = val[1:]
+                if unit == 'sec' or unit == 'second':
+                    val = direction
+                elif unit == 'min' or unit == 'minute':
+                    val = direction * 60
+                elif unit == 'hr' or unit == 'hour':
+                    val = direction * 3600
+                else:
+                    alternate = 'Invalid time adjustment'
+            
+            if alternate is None:
+                alternate = time_keeper.update_ds3231(val)
+                
         if show:
             self.show('show', 'ds3231', alt_text=alternate)
+    
+    
             
     def nearest(self, key, val, show=False):
         # adjust time to nearest minute
@@ -1030,14 +568,6 @@ class Options:
                 val = '{} {}'.format(time_keeper.get_formatted_date(), time_keeper.get_formatted_time())
             else:
                 val = item[1]
-                # if key == 'timezone':
-                    # tz = None
-                    # if val == 'secrets' and 'timezone' in secrets:
-                        # tz = secrets['timezone']
-                    # if val is None and time_keeper.timezone:
-                        # tz = time_keeper.timezone
-                    # if tz:
-                        # val = '{} ({})'.format(val, tz)
             print('{:9s} is {}'.format(key, val))
 
 class Console:
@@ -1089,14 +619,6 @@ class Timer:
         self.start_time = None
         return self.time
         
-# # --- Network setup ---
-# esp32_cs = digitalio.DigitalInOut(board.ESP_CS)
-# esp32_ready = digitalio.DigitalInOut(board.ESP_BUSY)
-# esp32_reset = digitalio.DigitalInOut(board.ESP_RESET)
-# spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
-# esp = adafruit_esp32spi.ESP_SPIcontrol(spi, esp32_cs, esp32_ready, esp32_reset)
-# wifi = adafruit_esp32spi_wifimanager.ESPSPI_WiFiManager(esp, secrets, None, attempts=4, debug=False)
-
 # Turn off the status neopixel
 #     The neopixel is WAY too bright for a clock in a dark room
 neoled = neopixel.NeoPixel(board.NEOPIXEL, 1)
@@ -1143,7 +665,6 @@ options = Options( {'interval' : [(Command.testInt,),                  30,      
                     'collect' :  [(Command.testBool,),                 False,    Options.replace,  True,     True],
                     'fudgemax' : [(Command.testInt,),                  10,       Options.replace,  True,     True],
                     'rotation' : [(Command.testRotate,),               'auto',   Options.replace,  True,     True],
-                    # 'timezone' : [(Command.testTimezone,),             None,     Options.replace,  True,     True],
                     'ds3231' :   [(Command.testStr,),                  None,     Options.ds3231,   False,    True],
                     'version' :  [(Command.testStr,),                  verstr,   Options.show,     False,    True],
                     'memory' :   [(Command.testStr,),                  None,     Options.show,     False,    True],
@@ -1154,7 +675,6 @@ options = Options( {'interval' : [(Command.testInt,),                  30,      
                     'show' :     [(Command.testStr,),                  None,     Options.show,     False,    False]} )
 
 options.set_rotation(options.get('rotation'))
-# options.replace('timezone', 'secrets', show=False)
        
 options.restore('restore', Options.DEFAULT_FILE)
 
@@ -1166,7 +686,6 @@ down_button = Button(board.BUTTON_DOWN)
 
 # Create the time_keeper 
 time_keeper = TimeKeeper()
-# time_keeper = TimeKeeper(tz=options.get('timezone'))
 
 # Create the console
 console = Console()
@@ -1199,8 +718,8 @@ while keep_going:
                 options.nearest(None, None)
                     
         # Every 1/2 second:
-        # Update the display every 1/2 second with
-        # time so that when using a blinking
+        # Update the display time every 1/2 second
+        # so that when using a blinking
         # cursor, it blinks once per second (1/2 second on,
         # 1/2 second off)
         
@@ -1223,14 +742,7 @@ while keep_going:
             print("long wait - local_time updated from ds3231")
                     
     except Exception as e:
-        # try:
-            # if time_keeper.exception_text:
-                # time_keeper.log_message("Last exception text: {}".format(time_keeper.exception_text))
-            # if time_keeper.last_response_data:
-                # time_keeper.log_message("Last response data:  {}".format(time_keeper.last_response_data))
         time_keeper.log_message(e, add_time=False, traceback=True, exception_value=e)
-        # except :
-            # pass
             
         supervisor.reload()
 

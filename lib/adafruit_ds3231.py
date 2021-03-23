@@ -99,6 +99,17 @@ class DS3231:
         self.i2c_device = I2CDevice(i2c, 0x68)
 
     @property
+    def datetime_at_second_boundary(self):
+        """Gets the current data and time at a second boundary"""
+        dt = self.datetime_register
+        sec = dt[5]
+        while True:
+            dt = self.datetime_register
+            if dt[5] != sec:
+                break
+        return dt
+
+    @property
     def datetime(self):
         """Gets the current date and time or sets the current date and time
         then starts the clock."""
