@@ -1,15 +1,16 @@
-
 # Matrix Clock
-# Runs on an Adafruit Matrix Portal with 64x32 RGB Matrix display
 
-# Version 3.1 - initial use of git repo
+# Runs on an Adafruit Matrix Portal with 64x32 RGB Matrix display
+# Requires a DS3231 Precision Real Time Clock
 
 # Square wave input pins available on Matrix Portal (A1, A2, A3, A4)
-#  set these to match how your Matrix Portal is wired to the DS3231 SQW pin
+#  set Pin to match how your Matrix Portal is wired to the DS3231 SQW pin
+#  set Pull_Up_Required to False if you have an external pull-up resistor
+#      attached to the Pin
 Square_Wave_Pin = 'A3'
 Square_Wave_Pull_Up_Required = True
 
-VERSION={"MAJOR": 3, "MINOR": 45}
+VERSION={"MAJOR": 3, "MINOR": 2}
 verstr = '{}.{}'.format(VERSION['MAJOR'], VERSION['MINOR'])
 
 import gc

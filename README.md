@@ -3,7 +3,7 @@
 Circuitpython code to implement a clock using an Adafruit Matrix Portal
 ***
 ## Hardware Requirements:
-|  Device               :|:  Source                         :|
+|  Device                |   Source                          |
 |:-----------------------|:----------------------------------|
 | 64x32 LED matrix       | Adafruit 2276, 2277, 2278 or 2279 |
 | DS3231 precision RTC   | Adafruit 3013, 4282 or 255        |
