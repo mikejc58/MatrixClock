@@ -3,8 +3,7 @@ pintest.txt
 pintest.py
 pintest2.py
 pintest2.txt
-lib/adafruit_register/
-lib/adafruit_io/
+lib/
 previous.py
 version_update.json
 *.mpy
