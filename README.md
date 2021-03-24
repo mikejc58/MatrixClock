@@ -24,22 +24,34 @@ resistor on that pin (the squre wave output is an open drain transistor
 and requires a pull-up; either an actual resistor pull-up to 3.3V or 
 the software can provide an internal pull-up.
 
-This project contains both a boot.py and a code.py file which need
-to be downloaded to the CIRCUITPY drive on the Matrix Portal.
+The code.py contains the main logic of the clock.
 
 The boot.py gets control on a hard reset and, in this case, does
-two things.  First, it disables auto-reload, which I find very
+two things.  
+
+1. It disables auto-reload, which I find very
 annoying and which sometimes causes the CIRCUITPY drive to become
-read-only.  Second, it reads the DOWN button on the Matrix Portal and,
-if it is held down during the reset, will make the CIRCUITPY drive 
+read-only.
+2. It reads the DOWN button on the Matrix Portal and,
+if the button is held down during the reset, it will make the CIRCUITPY drive 
 writable via USB and read-only to the code.py program.  If the button
 is not held down during the reset, then the CIRCUITPY drive will be
 writable by the code.py program and read-only via USB.
-The DOWN button must be held down at least through the time that the
+The DOWN button must be held down at least until the time that the
 'python' appears on the matrix.
 
+## Installation
+
+The following files from the repo must be copied to the root
+directory of the Matrix Portal's CIRCUITPY drive:
+
+* boot.py
+* code.py
+* adafruit_ds3231.py
+* IBMPlexMono-Medium-24_jep.bdf
+
 In addition to the files in this repo, the following are needed and
-should be stored in the /lib directory in the CIRCUITPY drive.
+should be stored in the /lib directory of the CIRCUITPY drive.
 
 *  adafruit_lis3dh
 *  neopixel
