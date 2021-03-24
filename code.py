@@ -4,7 +4,12 @@
 
 # Version 3.1 - initial use of git repo
 
-VERSION={"MAJOR": 3, "MINOR": 2}
+# Square wave input pins available on Matrix Portal (A1, A2, A3, A4)
+#  set these to match how your Matrix Portal is wired to the DS3231 SQW pin
+Square_Wave_Pin = 'A3'
+Square_Wave_Pull_Up_Required = True
+
+VERSION={"MAJOR": 3, "MINOR": 45}
 verstr = '{}.{}'.format(VERSION['MAJOR'], VERSION['MINOR'])
 
 import gc
@@ -23,66 +28,23 @@ from adafruit_display_text.label import Label
 from adafruit_bitmap_font import bitmap_font
 from adafruit_matrixportal.matrix import Matrix
 
-LOGGING_AVAILABLE = False
+class Colors:
+    def make_rgb_color(color):
+        val = 0
+        for i in color:
+            val = (val * 256) + i
+        return val
 
-# Setup color constants
-def make_rgb_color(color):
-    val = 0
-    for i in color:
-        val = (val * 256) + i
-    return val
-
-# Colors are tuples with a red, green and blue components
-BRITE_RED   = (90, 0, 0)
-BRITE_AMBER = (90, 45, 0)
-BRITE_GREEN = (45, 90, 0)
-
-DIM_RED     = (8, 0, 0)
-DIM_AMBER   = (16, 8, 0)
-DIM_GREEN   = (8, 16, 0)
-
-# RGB colors are integers that combine the R, G and B values
-RGB_BRITE_RED = make_rgb_color(BRITE_RED)
-RGB_BRITE_AMBER = make_rgb_color(BRITE_AMBER)
-RGB_BRITE_GREEN = make_rgb_color(BRITE_GREEN)
-
-RGB_BLACK = 0
-
-RGB_DIM_RED = make_rgb_color(DIM_RED)
-RGB_DIM_AMBER = make_rgb_color(DIM_AMBER)
-RGB_DIM_GREEN = make_rgb_color(DIM_GREEN)
-
-# Setup a palette for the AM/PM tilegrid
-bitmap_palette = displayio.Palette(2)
-bitmap_palette[0] = RGB_BLACK
-bitmap_palette[1] = RGB_BLACK
-
-# Create bitmap with 'AM' and 'PM'
-AM_PM_bitmap = displayio.Bitmap(10, 10, 2)
-for x in range(10):
-    for y in range(10):
-        AM_PM_bitmap[x, y] = 0
-A_pixels = ((0,1), (0,2), (0,3), (0,4), (1,0), (1,2), (2,0), (2,2), (3,1), (3,2), (3,3), (3,4))
-P_pixels = ((0,5), (0,6), (0,7), (0,8), (0,9), (1,5), (1,7), (2,5), (2,7), (3,5), (3,6), (3,7))
-M_pixels = ((5,0), (5,1), (5,2), (5,3), (5,4), (6,1), (7,2), (8,1), (9,0), (9,1), (9,2), (9,3), (9,4))
-for x,y in A_pixels:
-    AM_PM_bitmap[x, y] = 1
-for x,y in P_pixels:
-    AM_PM_bitmap[x, y] = 1
-for x,y in M_pixels:
-    AM_PM_bitmap[x, y] = 1
-    AM_PM_bitmap[x, y+5] = 1
+    Bright_Red = make_rgb_color((90, 0, 0))
+    Bright_Amber = make_rgb_color((90, 45, 0))
+    Bright_Green = make_rgb_color((45, 90, 0))
     
-
-AM_PM_TileGrid = displayio.TileGrid(AM_PM_bitmap, pixel_shader=bitmap_palette,
-                                    width=1, height=1, tile_width=10, tile_height=5)
-# Position the AM/PM on the display
-AM_PM_TileGrid.x = 48
-AM_PM_TileGrid.y = 26
-
-AM_PM_TileGrid[0] = 0
-
-
+    Dim_Red = make_rgb_color((8, 0, 0))
+    Dim_Amber = make_rgb_color((16, 8, 0))
+    Dim_Green = make_rgb_color((8, 16, 0))
+    
+    Black = make_rgb_color((0, 0, 0))
+    
 class Button:
     def __init__(self, pin):
         self.button = digitalio.DigitalInOut(pin)
@@ -114,66 +76,65 @@ class Button:
         self.prev_val = val
         return (pressed, pressed_time)
         
-# Class to display and keep track of the time
-class TimeKeeper:
-    BASEURL = 'http://worldtimeapi.org/api/'
-     
+class Logger:
     def __init__(self):
-        global LOGGING_AVAILABLE
+        self.AVAILABLE = True
+        
+    # Log messages to message_log.txt on the CIRCUITPY filesystem
+    def message(self, text, do_print=True, add_time=True, traceback=False, exception_value=None):
+        outtext = "                    - {}".format(text)
+        try:
+            if add_time:
+                outtext = "{} {} - {}".format(time_keeper.get_formatted_date(), time_keeper.get_formatted_time(), text)
+        except NameError:
+            pass
+        if do_print:
+            print(outtext)
+            if traceback:
+                sys.print_exception(exception_value)
+        if self.AVAILABLE and options.get('logging'):
+            try:
+                try:
+                    with open("/message_log.txt", "a") as wf:
+                        wf.write(outtext + "\n")
+                        if traceback:
+                            sys.print_exception(exception_value, wf)
+                        wf.flush()
+                except OSError as e:
+                    err_code = e.args[0]
+                    self.AVAILABLE = False
+                    options.replace('logging', False)
+                    if err_code == 28:
+                        self.message("Filesystem is full - logging disabled")
+                    elif err_code == 30:
+                        self.message("Filesystem is read-only - logging disabled")
+                    else:
+                        self.message("Logging got OSError ({}) - logging disabled".format(err_code))
+            except:
+                self.AVAILABLE = False
+                options.replace('logging', False)
+                self.message("Unexpected exception while logging - logging disabled")
+
+# Class to keep track of the time
+class TimeKeeper:     
+    def __init__(self):
         self.blink_colon = True
         self.ds3231 = None
         self.was_dst = None
         self.dst_offset = 0
-        self.url = TimeKeeper.BASEURL
+        # self.url = TimeKeeper.BASEURL
         self.last_timezone = None
         self.timezone = None
         self.timezone_change = False
         
         self.local_time_secs = 0
 
-        LOGGING_AVAILABLE = True
-        
         self._initialize_ds3231()
-        self.sqw = digitalio.DigitalInOut(board.A1)
-        self.sqw.direction = digitalio.Direction.INPUT
-        
+        self.setup_sqw(Square_Wave_Pin, Square_Wave_Pull_Up_Required)
         self._initialize_time()
         
-        self.log_message("Version   {}".format(verstr))
+        log.message("Version   {}".format(verstr))
 
-    # Log messages to message_log.txt on the CIRCUITPY filesystem
-    def log_message(self, text, do_print=True, add_time=True, traceback=False, exception_value=None):
-        global LOGGING_AVAILABLE
-        if add_time:
-            text = "{} {} - {}".format(self.get_formatted_date(), self.get_formatted_time(), text)
-        else:
-            text = "                    - {}".format(text)
-        if do_print:
-            print(text)
-            if traceback:
-                sys.print_exception(exception_value)
-        if LOGGING_AVAILABLE and options.get('logging'):
-            try:
-                try:
-                    with open("/message_log.txt", "a") as wf:
-                        wf.write(text + "\n")
-                        if traceback:
-                            sys.print_exception(exception_value, wf)
-                        wf.flush()
-                except OSError as e:
-                    err_code = e.args[0]
-                    LOGGING_AVAILABLE = False
-                    options.replace('logging', False)
-                    if err_code == 28:
-                        self.log_message("Filesystem is full - logging disabled")
-                    elif err_code == 30:
-                        self.log_message("Filesystem is read-only - logging disabled")
-                    else:
-                        self.log_message("Logging got OSError ({}) - logging disabled".format(err_code))
-            except:
-                LOGGING_AVAILABLE = False
-                options.replace('logging', False)
-                self.log_message("Unexpected exception while logging - logging disabled")
 
     # Initialize ds3231
     def _initialize_ds3231(self):
@@ -191,14 +152,29 @@ class TimeKeeper:
             self.ds3231.set_1Hz_SQW()
             self.local_time_secs = time.mktime(self.ds3231.datetime)
         else:
-            self.log_message("ds3231 RTC not found")
+            log.message("ds3231 RTC not found")
             exit()
+
+    def setup_sqw(self, pin, pullup):
+        try:
+            SQW_PIN = eval('board.' + pin)
+            log.message("Square Wave Pin == {}".format(SQW_PIN))
+        except AttributeError:
+            log.message("Invalid Square Wave Pin specified - {}".format(pin))
+            while True:
+                pass
+        self.sqw = digitalio.DigitalInOut(SQW_PIN)
+        self.sqw.direction = digitalio.Direction.INPUT
+        if pullup:
+            self.sqw.pull = digitalio.Pull.UP
+            
         
     # Format ds3231 data
     def format_ds3231(self):
         dstime = time.mktime(self.ds3231.datetime)
         return "{} {}  (power lost={}) ".format(self.get_formatted_date(dstime), self.get_formatted_time(dstime), self.ds3231.power_lost)
 
+    # update the time/date stored in the ds3231
     def update_ds3231(self, val):
         try:
             if isinstance(val, int):
@@ -244,76 +220,6 @@ class TimeKeeper:
         fmt = "{:2d}/{:02d}/{}".format(ts.tm_mon, ts.tm_mday, ts.tm_year)
         return fmt
         
-    # Update the time display
-    def update_display(self):
-    
-        now = time.localtime(self.local_time_secs)
-    
-        hours = now[3]
-        minutes = now[4]
-
-        # Determine the display color
-        color_option = options.get_actual_color()
-        if isinstance(color_option, tuple):
-            if hours >= options.get('night') or hours < options.get('day'):
-                color_option = color_option[0]
-            else:
-                color_option = color_option[1]
-            
-        hour_label.color = color_option
-        min_label.color = color_option
-        colon_label.color = color_option
-
-        # Handle AM/PM
-        show_ampm = options.get('ampm')
-        if not show_ampm:
-            color_option = RGB_BLACK
-        # 12 or 24 hour display
-        if not options.get('24h'):
-            bitmap_palette[1] = color_option
-            if hours >= 12: # PM
-                AM_PM_TileGrid[0] = 1
-                hours -= 12
-            else:           # AM
-                AM_PM_TileGrid[0] = 0
-            if hours == 0:
-                hours = 12
-        else:
-            show_ampm = False
-            bitmap_palette[1] = RGB_BLACK
-
-        blink = options.get('blink')
-        center = options.get('center')
-        
-        colon = ":"
-        if blink:
-            # blink the colon
-            if self.sqw.value:
-                colon = " "
-    
-        hour_label.text = "{}".format(hours)
-        min_label.text = "{:02d}".format(minutes)
-        colon_label.text = colon
-    
-        if center and hours < 10:
-            hour_label.x = 6
-            min_label.x = 29
-            colon_label.x = 21
-        else:
-            if hours < 10:
-                hour_label.x = 13
-            else:
-                hour_label.x = 0
-            min_label.x = 36
-            colon_label.x = 28
-    
-        y_offset = -2 if show_ampm else 0
-        hour_label.y = 16 + y_offset
-        min_label.y = 16 + y_offset
-        colon_label.y = 14 + y_offset
-        
-        matrix.display.show(group)
-
 class Command:
     def __init__(self, opts):
         self.options = opts
@@ -417,19 +323,19 @@ class Options:
         dim = item[1]
         if color == 'track':
             if dim:
-                return (RGB_DIM_RED, RGB_DIM_GREEN)
-            return (RGB_DIM_RED, RGB_BRITE_GREEN)
+                return (Colors.Dim_Red, Colors.Dim_Green)
+            return (Colors.Dim_Red, Colors.Bright_Green)
         if dim:
             if color == 'red':
-                return RGB_DIM_RED
-            return RGB_DIM_GREEN
+                return (Colors.Dim_Red, Colors.Dim_Red)
+            return (Colors.Dim_Green, Colors.Dim_Green)
         if color == 'red':
-            return RGB_BRITE_RED
-        return RGB_BRITE_GREEN
+            return (Colors.Bright_Red, Colors.Bright_Red)
+        return (Colors.Bright_Green, Colors.Bright_Green)
 
     # Replace an option's value
     def replace(self, key, val, show=True):
-        if key != 'logging' or val is False or LOGGING_AVAILABLE:
+        if key != 'logging' or val is False or log.AVAILABLE:
             item = self.commands[key]
             item[1] = val
             self.commands[key] = item
@@ -457,7 +363,7 @@ class Options:
                 val = 0
             else:
                 val = 180
-        matrix.display.rotation = val
+        display.matrix.display.rotation = val
 
     def ds3231(self, key, val, show=True):
         alternate = None
@@ -482,20 +388,7 @@ class Options:
                 
         if show:
             self.show('show', 'ds3231', alt_text=alternate)
-    
-    
-            
-    def nearest(self, key, val, show=False):
-        # adjust time to nearest minute
-        dt = time_keeper.ds3231.datetime
-        secs = time.mktime(dt)
-        sec = dt[5]
-        secs -= sec
-        if sec > 30:
-            secs += 60
-        time_keeper.ds3231.datetime = time.localtime(secs)
-        time_keeper.local_time_secs = secs
-            
+                
     def save(self, key, fname, show=True):
         if not fname:
             fname = Options.DEFAULT_FILE
@@ -509,15 +402,15 @@ class Options:
         try:
             with open(fname, 'w') as options_file:
                 json.dump(optdic, options_file)
-            print("Options saved to {}".format(fname))
+            log.message("Options saved to {}".format(fname))
         except Exception as e:
-            print("Exception saving options to {}".format(fname))
+            log.message("Exception saving options to {}".format(fname))
             txt = str(e).split(']')
             if len(txt) > 1:
                 txt = txt[1]
             else:
                 txt = txt[0]
-            print(txt)
+            log.message(txt)
             
     def restore(self, key, fname, show=True):
         if not fname:
@@ -530,15 +423,15 @@ class Options:
             
             for key, value in optdic.items():
                 self.replace(key, value, show=False)
-            print("Options restored from {}".format(fname))
+            log.message("Options restored from {}".format(fname))
         except Exception as e:
-            print("Exception loading options from {}".format(fname))
+            log.message("Exception loading options from {}".format(fname))
             txt = str(e).split(']')
             if len(txt) > 1:
                 txt = txt[1]
             else:
                 txt = txt[0]
-            print(txt)
+            log.message(txt)
 
     # Show an option by key, or all options
     def show(self, cc, key, alt_text=None):
@@ -618,6 +511,129 @@ class Timer:
             self.time = time.monotonic_ns() - self.start_time
         self.start_time = None
         return self.time
+
+class Display:
+    def __init__(self):
+        self.group = displayio.Group(max_size=4)
+        self.font = bitmap_font.load_font("/IBMPlexMono-Medium-24_jep.bdf")
+        self.font.load_glyphs('0123456789')
+        self.hour_label = Label(self.font, max_glyphs=2)
+        self.min_label = Label(self.font, max_glyphs=2)
+        self.colon_label = Label(self.font, max_glyphs=1)
+        self.setup_AM_PM()
+        self.group.append(self.colon_label)
+        self.group.append(self.hour_label)
+        self.group.append(self.min_label)
+        self.group.append(self.AM_PM_TileGrid)
+        
+        self.matrix = Matrix(bit_depth=5)   # bit_depth=5 allows 32 levels for each of R,G, and B
+                                            # and this allows maximum dimming of the display
+        
+    def show(self):
+        self.matrix.display.show(self.group)
+        
+    def setup_AM_PM(self):
+        # Setup a palette for the AM/PM tilegrid
+        self.bitmap_palette = displayio.Palette(2)
+        self.bitmap_palette[0] = Colors.Black
+        self.bitmap_palette[1] = Colors.Black
+        
+        # Create bitmap with 'AM' and 'PM'
+        self.AM_PM_bitmap = displayio.Bitmap(10, 10, 2)
+        for x in range(10):
+            for y in range(10):
+                self.AM_PM_bitmap[x, y] = 0
+        A_pixels = ((0,1), (0,2), (0,3), (0,4), (1,0), (1,2), (2,0), (2,2), (3,1), (3,2), (3,3), (3,4))
+        P_pixels = ((0,5), (0,6), (0,7), (0,8), (0,9), (1,5), (1,7), (2,5), (2,7), (3,5), (3,6), (3,7))
+        M_pixels = ((5,0), (5,1), (5,2), (5,3), (5,4), (6,1), (7,2), (8,1), (9,0), (9,1), (9,2), (9,3), (9,4))
+        for x,y in A_pixels:
+            self.AM_PM_bitmap[x, y] = 1
+        for x,y in P_pixels:
+            self.AM_PM_bitmap[x, y] = 1
+        for x,y in M_pixels:
+            self.AM_PM_bitmap[x, y] = 1
+            self.AM_PM_bitmap[x, y+5] = 1
+            
+        
+        self.AM_PM_TileGrid = displayio.TileGrid(self.AM_PM_bitmap, pixel_shader=self.bitmap_palette,
+                                            width=1, height=1, tile_width=10, tile_height=5)
+        # Position the AM/PM on the display
+        self.AM_PM_TileGrid.x = 48
+        self.AM_PM_TileGrid.y = 26
+        
+        self.AM_PM_TileGrid[0] = 0
+            
+    # Update the time display
+    def update(self):
+    
+        now = time.localtime(time_keeper.local_time_secs)
+    
+        hours = now[3]
+        minutes = now[4]
+
+        # Determine the display color
+        color_option = options.get_actual_color()
+        if hours >= options.get('night') or hours < options.get('day'):
+            color_option = color_option[0]
+        else:
+            color_option = color_option[1]
+            
+        self.hour_label.color = color_option
+        self.min_label.color = color_option
+        self.colon_label.color = color_option
+
+        # Handle AM/PM
+        show_ampm = options.get('ampm')
+        if not show_ampm:
+            color_option = Colors.Black
+        # 12 or 24 hour display
+        if not options.get('24h'):
+            self.bitmap_palette[1] = color_option
+            if hours >= 12: # PM
+                self.AM_PM_TileGrid[0] = 1
+                hours -= 12
+            else:           # AM
+                self.AM_PM_TileGrid[0] = 0
+            if hours == 0:
+                hours = 12
+        else:
+            show_ampm = False
+            self.bitmap_palette[1] = Colors.Black
+
+        blink = options.get('blink')
+        center = options.get('center')
+        
+        colon = ":"
+        if blink:
+            # blink the colon
+            if time_keeper.sqw.value:
+                colon = " "
+    
+        self.hour_label.text = "{}".format(hours)
+        self.min_label.text = "{:02d}".format(minutes)
+        self.colon_label.text = colon
+    
+        if center and hours < 10:
+            self.hour_label.x = 6
+            self.min_label.x = 29
+            self.colon_label.x = 21
+        else:
+            if hours < 10:
+                self.hour_label.x = 13
+            else:
+                self.hour_label.x = 0
+            self.min_label.x = 36
+            self.colon_label.x = 28
+    
+        y_offset = -2 if show_ampm else 0
+        self.hour_label.y = 16 + y_offset
+        self.min_label.y = 16 + y_offset
+        self.colon_label.y = 14 + y_offset
+        
+        self.show()
+
+# setup the logger
+log = Logger()
         
 # Turn off the status neopixel
 #     The neopixel is WAY too bright for a clock in a dark room
@@ -625,30 +641,14 @@ neoled = neopixel.NeoPixel(board.NEOPIXEL, 1)
 neoled.brightness = 0.05
 neoled.fill((0, 0, 0))
 
-# --- displayio setup ---
-matrix = Matrix(bit_depth=5)    # bit_depth=5 allows 32 levels for each of R, G, and B
-                                # and this allows maximum dimming of the display
-
-font = bitmap_font.load_font("/IBMPlexMono-Medium-24_jep.bdf")
-font.load_glyphs('0123456789:')
-
-hour_label = Label(font, max_glyphs=2)
-min_label = Label(font, max_glyphs=2)
-colon_label = Label(font, max_glyphs=1)
-
-group = displayio.Group(max_size=4)
-group.append(colon_label)
-group.append(hour_label)
-group.append(min_label)
-group.append(AM_PM_TileGrid)
-
-matrix.display.show(group)
-        
 # setup the accelerameter for later use
 i2c = busio.I2C(board.SCL, board.SDA)
 lis3dh = adafruit_lis3dh.LIS3DH_I2C(i2c, address=0x19)
 _ = lis3dh.acceleration
 time.sleep(0.1)
+
+# set up the display
+display = Display()
         
 # --- Options setup   option        validation                         value      function         saveable  display
 options = Options( {'interval' : [(Command.testInt,),                  30,       Options.replace,  True,     True],
@@ -669,23 +669,35 @@ options = Options( {'interval' : [(Command.testInt,),                  30,      
                     'version' :  [(Command.testStr,),                  verstr,   Options.show,     False,    True],
                     'memory' :   [(Command.testStr,),                  None,     Options.show,     False,    True],
                     'time' :     [(Command.testStr,),                  None,     Options.show,     False,    True],
-                    'nearest':   [(Command.testStr,),                  None,     Options.nearest,  False,    False],
                     'save' :     [(Command.testStr,),                  None,     Options.save,     False,    False],
                     'restore' :  [(Command.testStr,),                  None,     Options.restore,  False,    False],
                     'show' :     [(Command.testStr,),                  None,     Options.show,     False,    False]} )
 
 options.set_rotation(options.get('rotation'))
-       
 options.restore('restore', Options.DEFAULT_FILE)
 
 command = Command(options)
 
-# # Setup the buttons
+# Setup the buttons
 up_button = Button(board.BUTTON_UP)
 down_button = Button(board.BUTTON_DOWN)
 
 # Create the time_keeper 
 time_keeper = TimeKeeper()
+
+# Test that square wave is actually working
+time.sleep(2)
+end_time = time.monotonic_ns() + 2 * (10**9)
+sqw_val = time_keeper.sqw.value
+while time.monotonic_ns() < end_time:
+    if time_keeper.sqw.value != sqw_val:
+        break
+if time.monotonic_ns() >= end_time:
+    log.message("No squarewave detected on pin {}".format(Square_Wave_Pin))
+    sys.exit()
+
+time_keeper.local_time_secs = time.mktime(time_keeper.ds3231.datetime)
+log.message("Clock started")
 
 # Create the console
 console = Console()
@@ -715,7 +727,7 @@ while keep_going:
                 print("Long press {} seconds".format(pressed_time))
             else:
                 # adjust clock to nearest minute
-                options.nearest(None, None)
+                options.ds3231(None, 'nearest')
                     
         # Every 1/2 second:
         # Update the display time every 1/2 second
@@ -727,7 +739,7 @@ while keep_going:
         sqw = time_keeper.sqw.value
         if sqw != last_sqw:
             last_sqw = sqw
-            time_keeper.update_display()
+            display.update()
             
             # Once per second, increment the time
             if sqw:
@@ -739,10 +751,10 @@ while keep_going:
         if timer.time > 300_000_000:
             # update the time from the ds3231
             time_keeper.local_time_secs = time.mktime(time_keeper.ds3231.datetime)
-            print("long wait - local_time updated from ds3231")
+            log.message("long wait - local_time updated from ds3231")
                     
     except Exception as e:
-        time_keeper.log_message(e, add_time=False, traceback=True, exception_value=e)
+        log.message(e, add_time=False, traceback=True, exception_value=e)
             
         supervisor.reload()
 
