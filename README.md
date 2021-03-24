@@ -1,9 +1,11 @@
-Matrix Clock project to run on Adafruit Matrix Portal with circuitpython
-
-Requires:
-  64x32 LED matrix        Adafruit 2276, 2277, 2278 or 2279
-  DS3231 precision RTC    Adafruit 3013, 4282 or 255
-  Adafruit Matrix Portal  Adafruit 4745
+# Matrix Clock 
+***
+Circuitpython code to implement a clock using an Adafruit Matrix Portal
+***
+## Hardware Requirements:
+* | 64x32 LED matrix       | Adafruit 2276, 2277, 2278 or 2279 |
+* | DS3231 precision RTC   | Adafruit 3013, 4282 or 255        |
+* | Adafruit Matrix Portal | Adafruit 4745                     |
   
 The code could easily be adapted to any platform that can
 drive a 64x32 display
@@ -34,14 +36,15 @@ writable by the code.py program and read-only via USB.
 The DOWN button must be held down at least through the time that the
 'python' appears on the matrix.
 
-In addition to the files in this repo, the following are needed:
+In addition to the files in this repo, the following are needed and
+should be stored in the /lib directory in the CIRCUITPY drive.
 
-  adafruit_lis3dh
-  neopixel
-  adafruit_register
-  adafruit_matrixportal
-  adafruit_io
-  adafruit_display_text
-  adafruit_bus_device
-  adafruit_bitmap_font
+*  adafruit_lis3dh
+*  neopixel
+*  adafruit_register
+*  adafruit_matrixportal
+*  adafruit_io
+*  adafruit_display_text
+*  adafruit_bus_device
+*  adafruit_bitmap_font
   
