@@ -1,17 +1,25 @@
 # Matrix Clock
 
 # Runs on an Adafruit Matrix Portal with 64x32 RGB Matrix display
-# Requires a DS3231 Precision Real Time Clock
+#
+# Requires - a RTC chip (ds3231, ds1307 and pcf8523 supported)
+# Requires - the Square Wave output pin of the RTC board must be connected
+#            to one of the pins of the Matrix Portal (A1, A2, A3, A4)
+#            No external pull-up resistor is required
+#
+# copy the adafruit_ds3231, adafruit_ds1307 or adafruit_pcf8523 modules 
+# provided in this repository onto the CIRCUITPY drive in /lib
+#
+# MatrixClock will identify which chip you have connected and import the
+# correct module.  It will also find to which pin you connected the clock
+# chip's square wave output.
+#
 
-# Square wave input pins available on Matrix Portal (A1, A2, A3, A4)
-#  set Pin to match how your Matrix Portal is wired to the DS3231 SQW pin
-#  set Pull_Up_Required to False if you have an external pull-up resistor
-#      attached to the Pin
-Square_Wave_Pin = 'A3'
-Square_Wave_Pull_Up_Required = True
-
-VERSION={"MAJOR": 3, "MINOR": 2}
+VERSION={"MAJOR": 3, "MINOR": 67}
 verstr = '{}.{}'.format(VERSION['MAJOR'], VERSION['MINOR'])
+
+__version__ = verstr+".0-auto.0"
+__repo__ = "https://github.com/mikejc58/MatrixClock.git"
 
 import gc
 import time
@@ -23,12 +31,62 @@ import displayio
 import neopixel
 import sys
 import supervisor
+from adafruit_register import i2c_bit
+from adafruit_bus_device.i2c_device import I2CDevice
 import adafruit_lis3dh
-import adafruit_ds3231
 from adafruit_display_text.label import Label
 from adafruit_bitmap_font import bitmap_font
 from adafruit_matrixportal.matrix import Matrix
 
+# Identifies which clock chip is available
+class Clock:
+    _r5b7 = i2c_bit.RWBit(0x05, 7)
+    _r10b7 = i2c_bit.RWBit(0x10, 7)
+    _r12b0 = i2c_bit.RWBit(0x12, 0)
+    
+    def __init__(self, i2c_bus):
+        self.i2c_device = I2CDevice(i2c_bus, 0x68)
+        
+    def identify(self):
+        chip = self._identity()
+        log.message("Clock chip identified as {}".format(chip))
+        if chip == 'DS3231':            
+            from adafruit_ds3231 import DS3231 as Clock_chip
+        elif chip == 'DS1307':
+            from adafruit_ds1307 import DS1307 as Clock_chip
+        elif chip == 'PCF8523':
+            from adafruit_pcf8523 import PCF8523 as Clock_chip
+        else:   # can't actually get here
+            log.message("Can not identify the clock chip at i2c address 0x68")
+            sys.exit()
+        return Clock_chip
+    
+    def _identity(self):
+        # Reg 0x05, bit 7 is the 'century' bit in ds3231, and unimplemented in ds1307 and pcf8523
+        # if it can be modified, this could be a ds3231, but not ds1307 nor pcf8523
+        r5b7 = self._r5b7
+        self._r5b7 = True
+        if self._r5b7:
+            self._r5b7 = r5b7
+            return 'DS3231'
+        # Reg 0x10, bit 7 is not implemented in pcf8523, and is a user memory location in ds1307
+        # if it can be modified, this could be a ds1307, but not pcf8523   
+        r10b7 = self._r10b7
+        self._r10b7 = True
+        if self._r10b7:
+            self._r10b7 = r10b7
+            return 'DS1307'
+        # Reg 0x12, bit 0 is part of pcf8523's TimerB frequency control
+        # if it can be modified, this could be pcf8523    
+        r12b0 = self._r12b0
+        test = not r12b0
+        self._r12b0 = test
+        if self._r12b0 == test:
+            self._r12b0 = r12b0
+            return 'PCF8523'
+            
+        return 'UNKNOWN'
+        
 class Colors:
     def make_rgb_color(color):
         val = 0
@@ -93,7 +151,7 @@ class Logger:
             print(outtext)
             if traceback:
                 sys.print_exception(exception_value)
-        if self.AVAILABLE and options.get('logging'):
+        if 'options' in globals() and self.AVAILABLE and options.get('logging'):
             try:
                 try:
                     with open("/message_log.txt", "a") as wf:
@@ -104,7 +162,7 @@ class Logger:
                 except OSError as e:
                     err_code = e.args[0]
                     self.AVAILABLE = False
-                    options.replace('logging', False)
+                    options.replace('logging', False, show=False)
                     if err_code == 28:
                         self.message("Filesystem is full - logging disabled")
                     elif err_code == 30:
@@ -113,82 +171,107 @@ class Logger:
                         self.message("Logging got OSError ({}) - logging disabled".format(err_code))
             except:
                 self.AVAILABLE = False
-                options.replace('logging', False)
+                options.replace('logging', False, show=False)
                 self.message("Unexpected exception while logging - logging disabled")
 
 # Class to keep track of the time
 class TimeKeeper:     
     def __init__(self):
         self.blink_colon = True
-        self.ds3231 = None
-        self.was_dst = None
-        self.dst_offset = 0
-        # self.url = TimeKeeper.BASEURL
-        self.last_timezone = None
-        self.timezone = None
-        self.timezone_change = False
+        self.clock_chip = None
+        # self.was_dst = None
+        # self.dst_offset = 0
+        # self.last_timezone = None
+        # self.timezone = None
+        # self.timezone_change = False
         
         self.local_time_secs = 0
 
-        self._initialize_ds3231()
-        self.setup_sqw(Square_Wave_Pin, Square_Wave_Pull_Up_Required)
+        self._initialize_clock_chip()
+        self.setup_sqw()
         self._initialize_time()
         
-        log.message("Version   {}".format(verstr))
 
-
-    # Initialize ds3231
-    def _initialize_ds3231(self):
-        # Check for ds3231 RTC
-        detected = False
-        while not i2c.try_lock():
-            pass
-        for x in i2c.scan():
-            if x == 0x68:
-                detected = True
-                break
-        i2c.unlock()
-        if detected:
-            self.ds3231 = adafruit_ds3231.DS3231(i2c)
-            self.ds3231.set_1Hz_SQW()
-            self.local_time_secs = time.mktime(self.ds3231.datetime)
-        else:
-            log.message("ds3231 RTC not found")
-            exit()
-
-    def setup_sqw(self, pin, pullup):
+    # Initialize clock_chip
+    def _initialize_clock_chip(self):
         try:
-            SQW_PIN = eval('board.' + pin)
-            log.message("Square Wave Pin == {}".format(SQW_PIN))
-        except AttributeError:
-            log.message("Invalid Square Wave Pin specified - {}".format(pin))
-            while True:
-                pass
-        self.sqw = digitalio.DigitalInOut(SQW_PIN)
-        self.sqw.direction = digitalio.Direction.INPUT
-        if pullup:
-            self.sqw.pull = digitalio.Pull.UP
+            self.clock_chip = Clock_chip(i2c)
+            # ensure the clock is running
+            if self.clock_chip.disable_oscillator:
+                self.clock_chip.disable_oscillator = False
+                log.message("{} oscillator started".format(self.clock_chip.__class__.__name__))
+            self.clock_chip.square_wave_frequency = 1
+            self.local_time_secs = time.mktime(self.clock_chip.datetime)
+        except ValueError as e:
+            log.message("RTC not available:  '{}'".format(e))
+            raise SystemExit
+
+    # Identify which of the pins (A1, A2, A3, or A4) is connected to the
+    # clock chip's square wave output
+    def setup_sqw(self):
+        # wait a bit for the clock to get going
+        time.sleep(1)
+        self.sqw = None
+        for pin in ['A1', 'A2', 'A3', 'A4']:
+            board_pin = eval('board.' + pin)
+            sqw = digitalio.DigitalInOut(board_pin)
+            sqw.direction = digitalio.Direction.INPUT
+            sqw.pull = digitalio.Pull.UP
+            if self.has_square_wave(sqw):
+                self.sqw = sqw
+                log.message("Square Wave detected on pin {}".format(pin))
+                break
+            else:
+                sqw.deinit()
+                
+        if self.sqw is None:
+            log.message("Square Wave not found on A1, A2, A3 or A4")
+            sys.exit()
+    
+    def has_square_wave(self, sqw):
+        end_time = time.monotonic_ns() + 2 * (10**9)
+        sqw_val = sqw.value
+        while time.monotonic_ns() < end_time:
+            if sqw.value != sqw_val:
+                break
+                
+        return time.monotonic_ns() < end_time
             
         
-    # Format ds3231 data
-    def format_ds3231(self):
-        dstime = time.mktime(self.ds3231.datetime)
-        return "{} {}  (power lost={}) ".format(self.get_formatted_date(dstime), self.get_formatted_time(dstime), self.ds3231.power_lost)
+    # Format clock_chip data
+    def format_clock_chip(self):
+        dstime = time.mktime(self.clock_chip.datetime)
+        return "{} {}".format(self.get_formatted_date(dstime), self.get_formatted_time(dstime))
 
-    # update the time/date stored in the ds3231
-    def update_ds3231(self, val):
+    def datetime_at_second_boundary(self):
+        """Gets the current data and time at a second boundary"""
+        dt = self.clock_chip.datetime
+        sec = dt[5]
+        while True:
+            dt = self.clock_chip.datetime
+            if dt[5] != sec:
+                break
+        return dt
+        
+
+    # update the time/date stored in the clock_chip
+    def update_clock_chip(self, val):
         try:
             if isinstance(val, int):
-                secs = time.mktime(self.ds3231.datetime_at_second_boundary)
-                self.ds3231.datetime = time.localtime(secs+val)
+                try:
+                    secs = time.mktime(self.datetime_at_second_boundary())
+                    self.clock_chip.datetime = time.localtime(secs+val)
+                except Exception as e:
+                    log.message("Exception in update_clock_chip -- '{}'".format(e), traceback=True, exception_value=e)
             elif val == 'nearest':
-                dt = self.ds3231.datetime
+                dt = self.clock_chip.datetime
                 secs = time.mktime(dt)
                 sec = dt[5]
                 secs -= sec
                 if sec > 30:
                     secs += 60
-                self.ds3231.datetime = time.localtime(secs)
+                self.clock_chip.disable_oscillator = True
+                self.clock_chip.datetime = time.localtime(secs)
             else:
                 dt = val.split(' ')
                 ymd = dt[0].split('/')
@@ -199,13 +282,13 @@ class TimeKeeper:
                 hour = int(hms[0])
                 mn = int(hms[1])
                 sec = int(hms[2])
-                self.ds3231.datetime = time.struct_time(year, mon, day, hour, mn, sec, 0, -1, -1 )
-            self.local_time_secs = time.mktime(self.ds3231.datetime)
+                self.clock_chip.datetime = time.struct_time(year, mon, day, hour, mn, sec, 0, -1, -1 )
+            self.local_time_secs = time.mktime(self.clock_chip.datetime)
         except:
             return "Invalid date/time"
 
     def _initialize_time(self):
-        self.local_time_secs = time.mktime(self.ds3231.datetime)
+        self.local_time_secs = time.mktime(self.clock_chip.datetime)
 
     def get_formatted_time(self, timeis=None):
         if not timeis:
@@ -341,14 +424,6 @@ class Options:
             item[1] = val
             self.commands[key] = item
         
-        if key == 'interval':
-            if 'time_keeper' in globals():
-                time_keeper.reset_interval(new_interval=val)
-                
-        if key == 'timezone':
-            if 'time_keeper' in globals():
-                time_keeper.set_tz(val)
-        
         if key == 'rotation':
             self.set_rotation(val)    
             
@@ -366,7 +441,7 @@ class Options:
                 val = 180
         display.matrix.display.rotation = val
 
-    def ds3231(self, key, val, show=True):
+    def rtc(self, key, val, show=True):
         alternate = None
         val = val.strip()
         if val:
@@ -385,10 +460,10 @@ class Options:
                     alternate = 'Invalid time adjustment'
             
             if alternate is None:
-                alternate = time_keeper.update_ds3231(val)
+                alternate = time_keeper.update_clock_chip(val)
                 
         if show:
-            self.show('show', 'ds3231', alt_text=alternate)
+            self.show('show', 'rtc', alt_text=alternate)
                 
     def save(self, key, fname, show=True):
         if not fname:
@@ -411,7 +486,7 @@ class Options:
                 txt = txt[1]
             else:
                 txt = txt[0]
-            log.message(txt)
+            log.message(txt.strip())
             
     def restore(self, key, fname, show=True):
         if not fname:
@@ -427,12 +502,13 @@ class Options:
             log.message("Options restored from {}".format(fname))
         except Exception as e:
             log.message("Exception loading options from {}".format(fname))
+            log.message("e = '{}'".format(e))
             txt = str(e).split(']')
             if len(txt) > 1:
                 txt = txt[1]
             else:
                 txt = txt[0]
-            log.message(txt)
+            log.message(txt.strip())
 
     # Show an option by key, or all options
     def show(self, cc, key, alt_text=None):
@@ -454,12 +530,12 @@ class Options:
         if item[4]:
             if alt_text:
                 val = alt_text
-            elif key == 'ds3231':
-                val = time_keeper.format_ds3231()
+            elif key == 'rtc':
+                val = time_keeper.format_clock_chip().strip()
             elif key == 'memory':
                 val = gc.mem_free()
             elif key == 'time':
-                val = '{} {}'.format(time_keeper.get_formatted_date(), time_keeper.get_formatted_time())
+                val = '{} {}'.format(time_keeper.get_formatted_date(), time_keeper.get_formatted_time()).strip()
             else:
                 val = item[1]
             print('{:9s} is {}'.format(key, val))
@@ -467,6 +543,7 @@ class Options:
 class Console:
     def __init__(self):
         self.inbuffer = ''
+        self.normalchars = '0123456789/: abcdefghijklmnopqrstuvwxyz'
         
     def get_command(self):
         cmdstr = None
@@ -477,8 +554,10 @@ class Console:
             if ch[0] == '\x7f':
                 if len(self.inbuffer) > 0:
                     self.inbuffer = self.inbuffer[:-1]
-                    print()
-                    print("{}".format(self.inbuffer), end='')
+                    # return to start of line, print the shortened string, 
+                    # print a blank over the deleted character,
+                    # use escape sequence to move the cursor left one space
+                    print("\r{} \x1b\x5b\x44".format(self.inbuffer), end='')
                     
             # handle newline
             elif ch[0] == '\n':
@@ -509,7 +588,8 @@ class Timer:
     @property
     def stop(self):
         if self.start_time:
-            self.time = time.monotonic_ns() - self.start_time
+            self.time = time.monotonic_ns()
+            self.diff = self.time - self.start_time
         self.start_time = None
         return self.time
 
@@ -635,6 +715,7 @@ class Display:
 
 # setup the logger
 log = Logger()
+log.message("MatrixClock Version   {}".format(verstr))
         
 # Turn off the status neopixel
 #     The neopixel is WAY too bright for a clock in a dark room
@@ -642,19 +723,18 @@ neoled = neopixel.NeoPixel(board.NEOPIXEL, 1)
 neoled.brightness = 0.05
 neoled.fill((0, 0, 0))
 
-# setup the accelerameter for later use
 i2c = busio.I2C(board.SCL, board.SDA)
+
+# setup the accelerameter for later use
 lis3dh = adafruit_lis3dh.LIS3DH_I2C(i2c, address=0x19)
 _ = lis3dh.acceleration
 time.sleep(0.1)
 
 # set up the display
 display = Display()
-        
+
 # --- Options setup   option        validation                         value      function         saveable  display
-options = Options( {'interval' : [(Command.testInt,),                  30,       Options.replace,  True,     True],
-                    'ping' :     [(Command.testNone, Command.testStr), None,     Options.replace,  True,     True],
-                    '24h' :      [(Command.testBool,),                 False,    Options.replace,  True,     True],
+options = Options( {'24h' :      [(Command.testBool,),                 False,    Options.replace,  True,     True],
                     'blink' :    [(Command.testBool,),                 True,     Options.replace,  True,     True],
                     'center' :   [(Command.testBool,),                 True,     Options.replace,  True,     True],
                     'dim' :      [(Command.testBool,),                 True,     Options.replace,  True,     True],
@@ -664,9 +744,8 @@ options = Options( {'interval' : [(Command.testInt,),                  30,      
                     'day' :      [(Command.testHour,),                 6,        Options.replace,  True,     True],
                     'logging' :  [(Command.testBool,),                 True,     Options.replace,  True,     True],
                     'collect' :  [(Command.testBool,),                 False,    Options.replace,  True,     True],
-                    'fudgemax' : [(Command.testInt,),                  10,       Options.replace,  True,     True],
                     'rotation' : [(Command.testRotate,),               'auto',   Options.replace,  True,     True],
-                    'ds3231' :   [(Command.testStr,),                  None,     Options.ds3231,   False,    True],
+                    'rtc' :      [(Command.testStr,),                  None,     Options.rtc,      False,    True],
                     'version' :  [(Command.testStr,),                  verstr,   Options.show,     False,    True],
                     'memory' :   [(Command.testStr,),                  None,     Options.show,     False,    True],
                     'time' :     [(Command.testStr,),                  None,     Options.show,     False,    True],
@@ -683,22 +762,13 @@ command = Command(options)
 up_button = Button(board.BUTTON_UP)
 down_button = Button(board.BUTTON_DOWN)
 
+Clock_chip = Clock(i2c).identify()
+
 # Create the time_keeper 
 time_keeper = TimeKeeper()
 
-# Test that square wave is actually working
-time.sleep(2)
-end_time = time.monotonic_ns() + 2 * (10**9)
-sqw_val = time_keeper.sqw.value
-while time.monotonic_ns() < end_time:
-    if time_keeper.sqw.value != sqw_val:
-        break
-if time.monotonic_ns() >= end_time:
-    log.message("No squarewave detected on pin {}".format(Square_Wave_Pin))
-    sys.exit()
-
-time_keeper.local_time_secs = time.mktime(time_keeper.ds3231.datetime)
 log.message("Clock started")
+time_keeper.local_time_secs = time.mktime(time_keeper.clock_chip.datetime)
 
 # Create the console
 console = Console()
@@ -708,57 +778,62 @@ keep_going = True
 inpbuffer = ''
 last_sqw = False
 timer = Timer()
-while keep_going:
-
-    try:
-        # Check for and execute a command from the console
-        timer.start
-        cmdstr = console.get_command()
-        if cmdstr:
-            command.run(cmdstr)
-                
-        # Every 50 ms:
-        # Read the buttons
-        
-        pressed, pressed_time = down_button.read()
-        # check if button just released
-        if not pressed and pressed_time is not None:
-            # button was pressed and released
-            if pressed_time > 2.0:
-                print("Long press {} seconds".format(pressed_time))
-            else:
-                # adjust clock to nearest minute
-                options.ds3231(None, 'nearest')
-                    
-        # Every 1/2 second:
-        # Update the display time every 1/2 second
-        # so that when using a blinking
-        # cursor, it blinks once per second (1/2 second on,
-        # 1/2 second off)
-        
-        # time_keeper.sqw.value changes every 1/2 second
-        sqw = time_keeper.sqw.value
-        if sqw != last_sqw:
-            last_sqw = sqw
-            display.update()
-            
-            # Once per second, increment the time
-            if sqw:
-                time_keeper.local_time_secs += 1
-
-        # If we processed some long running operation above,
-        #   update the running time (local_time_secs) from the ds3231
-        timer.stop
-        if timer.time > 300_000_000:
-            # update the time from the ds3231
-            time_keeper.local_time_secs = time.mktime(time_keeper.ds3231.datetime)
-            log.message("long wait - local_time updated from ds3231")
-                    
-    except Exception as e:
-        log.message(e, add_time=False, traceback=True, exception_value=e)
-            
-        supervisor.reload()
-
+try:
+    while keep_going:
     
-    time.sleep(0.050)
+        try:
+            # just force a read of the clock chip to see if something bad happens
+            # timex = time_keeper.clock_chip.datetime
+            # Check for and execute a command from the console
+            timer.start
+            cmdstr = console.get_command()
+            if cmdstr:
+                command.run(cmdstr)
+            # Every 50 ms: 
+            # Read the buttons
+             
+            pressed, pressed_time = up_button.read()
+            # check if button just released
+            if not pressed and pressed_time is not None:
+                # button was pressed and released
+                if pressed_time > 2.0:
+                    print("Long press {} seconds".format(pressed_time))
+                else:
+                    # adjust clock to nearest minute
+                    options.clock_chip(None, 'nearest')
+                        
+            # Update the display time every 1/2 second
+            # so that when using a blinking
+            # cursor, it blinks once per second (1/2 second on,
+            # 1/2 second off)
+            
+            # time_keeper.sqw.value changes every 1/2 second
+            sqw = time_keeper.sqw.value
+            if sqw != last_sqw:
+                last_sqw = sqw
+                display.update()
+                
+                # Once per second, increment the time
+                if sqw:
+                    time_keeper.local_time_secs += 1
+    
+            # If we processed some long running operation above,
+            #   update the running time (local_time_secs) from the clock_chip
+            timer.stop
+            if timer.diff > 300_000_000:
+                # update the time from the clock_chip
+                time_keeper.local_time_secs = time.mktime(time_keeper.clock_chip.datetime)
+                log.message("delay {:.2f} seconds - local_time updated from clock_chip".format(float(timer.diff) / (10**9)))
+            
+        except Exception as e:
+            log.message(e, add_time=False, traceback=True, exception_value=e)
+                
+            supervisor.reload()
+    
+        
+        time.sleep(0.050)
+except (KeyboardInterrupt, SystemExit):
+    log.message("Exit to REPL")
+    time_keeper.clock_chip.square_wave_frequency = 0
+    time_keeper.sqw.deinit()
 

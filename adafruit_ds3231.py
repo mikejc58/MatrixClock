@@ -48,18 +48,13 @@ __version__ = "0.0.0-auto.0"
 __repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_DS3231.git"
 
 # pylint: disable-msg=too-few-public-methods
+# pylint: disable-msg=too-many-instance-attributes
 class DS3231:
     """Interface to the DS3231 RTC."""
 
     lost_power = i2c_bit.RWBit(0x0F, 7)
     """True if the device has lost power since the time was set."""
 
-    _INTCN = i2c_bit.RWBit(0x0E, 2)
-    """True if in interrupt mode, False if in Square Wave mode."""
-    
-    _set_1Hz_SQW = i2c_bits.RWBits(3, 0x0E, 2)
-    """These three bits == 000 for 1Hz square wave output."""
-    
     disable_oscillator = i2c_bit.RWBit(0x0E, 7)
     """True if the oscillator is disabled."""
 
@@ -84,6 +79,14 @@ class DS3231:
     alarm2_status = i2c_bit.RWBit(0x0F, 1)
     """True if alarm2 is alarming. Set to False to reset."""
 
+    _square_wave_control = i2c_bits.RWBits(3, 0x0E, 2)
+    """reg 0x0e, bits 3:4 identify the square wave frequency, bit 2 is disable"""
+
+    _r5b7 = i2c_bit.RWBit(0x05, 7)
+    """reg 0x05, bit 7 used to distinguish among ds1307, pcf8523 and ds3231"""
+    _r10b7 = i2c_bit.RWBit(0x10, 7)
+    """reg 0x10, bit 7 used to distinguish among ds1307, pcf8523 and ds3231"""
+
     # pylint: disable=unexpected-keyword-arg
     _calibration = i2c_bits.RWBits(8, 0x10, 0, 1, signed=True)
 
@@ -97,17 +100,27 @@ class DS3231:
 
     def __init__(self, i2c):
         self.i2c_device = I2CDevice(i2c, 0x68)
+        chip = self.chip_identity
+        expected = self.__class__.__name__
+        if chip != expected:
+            raise ValueError('Expected {}, found {}'.format(expected, chip))
 
     @property
-    def datetime_at_second_boundary(self):
-        """Gets the current data and time at a second boundary"""
-        dt = self.datetime_register
-        sec = dt[5]
-        while True:
-            dt = self.datetime_register
-            if dt[5] != sec:
-                break
-        return dt
+    def chip_identity(self):
+        """identify the RTC chip (distinguishes among DS1307, PCF8523 and DS3231)"""
+        r5b7 = self._r5b7
+        self._r5b7 = True
+        if self._r5b7:          # if r5 bit7 can be set, this must be ds3231
+            self._r5b7 = r5b7
+            return 'DS3231'
+            
+        r10b7 = self._r10b7
+        self._r10b7 = True
+        if self._r10b7:         # if r10 bit7 can be set, this must be ds1307
+            self._r10b7 = r10b7
+            return 'DS1307'
+            
+        return 'PCF8523'        # must be pcf8523
 
     @property
     def datetime(self):
@@ -135,24 +148,22 @@ class DS3231:
         while self._conv:
             pass  # Wait for manual conversion request to complete
         return self.temperature
-    
-    def set_1Hz_SQW(self):
-        """Sets the chip in Square Wave output mode.  Frequency set to 
-        1 Hz. (Alarms are disabled in this mode)"""
-        self._set_1Hz_SQW = 0
-    
+
     @property
-    def power_lost(self):
-        """True if power has been lost since the last time the clock was set."""
-        return self.lost_power
-        
-    @property
-    def int_sqw(self):
-        return self._INTCN
-        
-    @int_sqw.setter
-    def int_sqw(self, value):
-        self._INTCN = value
+    def square_wave_frequency(self):
+        """Return the square wave frequency, 0 if not enabled"""
+        value = self._square_wave_control
+        freqs = (1, 0, 1024, 0, 4096, 0, 8192, 0)
+        return freqs[value]
+
+    @square_wave_frequency.setter
+    def square_wave_frequency(self, frequency):
+        available_frequencies = {0: 1, 1: 0, 1024: 2, 4096: 4, 8192: 6}
+        try:
+            code = available_frequencies[frequency]
+            self._square_wave_control = code
+        except KeyError:
+            raise ValueError('square wave frequency {} not available'.format(frequency))
 
     @property
     def calibration(self):

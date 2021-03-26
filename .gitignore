@@ -4,6 +4,7 @@ pintest.py
 pintest2.py
 pintest2.txt
 lib/
+private/
 previous.py
 version_update.json
 *.mpy
