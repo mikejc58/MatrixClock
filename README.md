@@ -42,7 +42,7 @@ The support modules (included in this repo) for the chips are:
 MatrixClock will identify which clock chip you have and load
 the appropriate module.  You only need to place the appropriate
 module (or all of them) on the CIRCUITPY drive.  MatrixClock will
-also detect to which pin (A1, A2, A3, or A4) you have connected 
+also detect to which pin (A0, A1, A2, A3, or A4) you have connected 
 the clock chip's square wave output.
 
 ### Display
