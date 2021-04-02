@@ -10,22 +10,24 @@
 # and load the appropriate driver
 
 from adafruit_register import i2c_bit
+from adafruit_register import i2c_bits
 from adafruit_bus_device.i2c_device import I2CDevice
 import sys
 import digitalio
 import board
 import busio
 import time
+import rtc
+from datetime_2000 import Time2000
 
 import logger
 
-
 # Identifies which clock chip is available
 class Clock:
+    
     class Chip:
-        _r5b7 = i2c_bit.RWBit(0x05, 7)
-        _r10b7 = i2c_bit.RWBit(0x10, 7)
-        _r12b0 = i2c_bit.RWBit(0x12, 0)
+        _r13b0 = i2c_bit.ROBit(0x13, 0)
+        _r3fb0 = i2c_bit.RWBit(0x3f, 0)
         
         def __init__(self, i2c_bus):
             self.i2c_device = I2CDevice(i2c_bus, 0x68)
@@ -46,75 +48,89 @@ class Clock:
             return Clock_chip
         
         def _identity(self):
-            # Reg 0x05, bit 7 is the 'century' bit in ds3231, and unimplemented in ds1307 and pcf8523
-            # if it can be modified, this could be a ds3231, but not ds1307 nor pcf8523
-            r5b7 = self._r5b7
-            self._r5b7 = True
-            if self._r5b7:
-                self._r5b7 = r5b7
-                return 'DS3231'
-            # Reg 0x10, bit 7 is not implemented in pcf8523, and is a user memory location in ds1307
-            # if it can be modified, this could be a ds1307, but not pcf8523   
-            r10b7 = self._r10b7
-            self._r10b7 = True
-            if self._r10b7:
-                self._r10b7 = r10b7
-                return 'DS1307'
-            # Reg 0x12, bit 0 is part of pcf8523's TimerB frequency control
-            # if it can be modified, this could be pcf8523    
-            r12b0 = self._r12b0
-            test = not r12b0
-            self._r12b0 = test
-            if self._r12b0 == test:
-                self._r12b0 = r12b0
-                return 'PCF8523'
-                
-            return 'UNKNOWN'
-
+            try:
+                r13b0 = self._r13b0
+            except OSError:
+                dev_id = 'DS3231'
+            else:
+                try:
+                    r3fb0 = self._r3fb0
+                    self._r3fb0 = not r3fb0
+                    if r3fb0 == self._r3fb0:
+                        dev_id = 'PCF8523'
+                    else:
+                        dev_id = 'DS1307'
+                        self._r3fb0 = r3fb0
+                except OSError:
+                    print("OSError accessing reg 0x3F")
+                    
+            return dev_id
+            
     def __init__(self, i2c_bus):
         # identify the clock chip and set it up
         try:
             self.chip = Clock.Chip(i2c_bus).identify()(i2c_bus)
-            if 'square_wave_frequency' not in dir(self.chip):
+            self.pcf8523 = True if self.chip.__class__.__name__ == 'PCF8523' else False
+            if 'square_wave_frequency' not in dir(type(self.chip)):
                 log.message("Incompatible version of {}".format(self.chip.__module__))
                 raise SystemExit
             # ensure the clock is running
             if self.chip.disable_oscillator:
                 self.chip.disable_oscillator = False
                 log.message("{} oscillator started".format(self.chip.__class__.__name__))
+                time.sleep(1)
             self.chip.square_wave_frequency = 1
+            
+            if not self.validate_datetime():
+                ts = time.struct_time((2000, 1, 1, 0, 0, 0, -1, -1, -1))
+                self.chip.datetime = ts
+            
         except ValueError as e:
             log.message("RTC not available:  '{}'".format(e))
             raise SystemExit
         
         # find the pin attached to the chip's square wave output
         # and set it up for use
-        self.setup_sqw()
+        self.sqw = self.setup_sqw()
+        if self.sqw is None:
+            sys.exit()
+
+    def validate_datetime(self):
+        """ determine if the date/time stored in the RTC chip
+        is valid. """
+        ts = self.chip.datetime
+        if ts.tm_mday < 1 or ts.tm_mday > 31:
+            return False
+        if ts.tm_mon < 1 or ts.tm_mon > 12:
+            return False
+        if ts.tm_hour > 23 or ts.tm_min > 59 or ts.tm_sec > 59:
+            return False
+        return True
 
     # Identify which of the pins (A0, A1, A2, A3, or A4) is connected to the
     # clock chip's square wave output
-    def setup_sqw(self):
-        # wait a bit for the clock to get going
-        time.sleep(1)
-        self.sqw = None
+    @staticmethod
+    def setup_sqw():
+        """ detect which pin has a changing signal and set that  pin
+        up as an input with a pullup """
         for pin in ['A1', 'A2', 'A3', 'A4', 'A0']:
             board_pin = eval('board.' + pin)
             sqw = digitalio.DigitalInOut(board_pin)
             sqw.direction = digitalio.Direction.INPUT
             sqw.pull = digitalio.Pull.UP
             if Clock.has_square_wave(sqw):
-                self.sqw = sqw
                 log.message("Square Wave detected on pin {}".format(pin))
                 break
             else:
                 sqw.deinit()
-                
-        if self.sqw is None:
+        else:        
             log.message("Square Wave not found on A0, A1, A2, A3 or A4")
-            sys.exit()
-            
+            sqw = None
+        return sqw
+        
     @staticmethod
     def has_square_wave(sqw):
+        """ test if a signal is seen on the pin specified """
         end_time = time.monotonic_ns() + 2 * (10**9)
         sqw_val = sqw.value
         while time.monotonic_ns() < end_time:
@@ -126,11 +142,9 @@ class Clock:
     def datetime_at_second_boundary(self):
         """Gets the current data and time immediately after the seconds change"""
         dt = self.chip.datetime
-        sec = dt[5]
-        while True:
+        sec = dt.tm_sec
+        while dt.tm_sec == sec:
             dt = self.chip.datetime
-            if dt[5] != sec:
-                break
         return dt
         
     # update the time/date stored in the clock_chip
@@ -146,13 +160,12 @@ class Clock:
                 # updated itself (ie. the seconds have just changed.)
                 # This is because when the time registers are written, the 
                 # countdown timer (that determines when the next update
-                # occurs) is reset.  So on average, the clock loses 1/2
-                # second when the update is done randomly.  Doing the
-                # update immediately after the seconds change minimizes
+                # occurs) is reset (on DS1307 and DS3231).  So on average, 
+                # the clock loses 1/2 second when the update is done randomly.  
+                # Doing the update immediately after the seconds change minimizes
                 # this loss.
-                # (this is true for both the DS1307 and DS3231)
-                secs = time.mktime(self.datetime_at_second_boundary)
-                self.chip.datetime = time.localtime(secs+val)
+                secs = Time2000.mktime(self.datetime_at_second_boundary)
+                self.chip.datetime = Time2000.datetime(secs+val)
             elif val == 'nearest':
                 # This path is synchronizing the clock with an external
                 # time source. So we don't need to wait until just after
@@ -161,16 +174,17 @@ class Clock:
                 # the seconds again.  This is automatic on ds1307 and ds3231
                 # but the pcf8523 requires us to stop the oscillator 
                 dt = self.chip.datetime
-                secs = time.mktime(dt)
-                sec = dt[5]
+                secs = Time2000.mktime(dt)
+                sec = dt.tm_sec
                 secs -= sec
                 if sec > 30:
                     secs += 60
                 # important for pcf8523 to make clock reset its timing chain
                 # so that it starts on a second boundary
                 # ds1307 and ds3231 do this automatically
-                self.chip.disable_oscillator = True
-                self.chip.datetime = time.localtime(secs)
+                if self.pcf8523:
+                    self.chip.disable_oscillator = True
+                self.chip.datetime = Time2000.datetime(secs)
             else:
                 # This path is setting a completely new time, perhaps 
                 # synchronizing with an external time source.  As above, 
@@ -187,9 +201,10 @@ class Clock:
                 # important for pcf8523 to make clock reset its timing chain
                 # so that it starts on a second boundary
                 # ds1307 and ds3231 do this automatically
-                self.chip.disable_oscillator = True
-                self.chip.datetime = time.struct_time(year, mon, day, hour, mn, sec, 0, -1, -1 )
-            return time.mktime(self.chip.datetime)
+                if self.pcf8523:
+                    self.chip.disable_oscillator = True
+                self.chip.datetime = time.struct_time(year, mon, day, hour, mn, sec, Time2000.day_of_week(year, mon, day), -1, -1 )
+            return Time2000.mktime(self.chip.datetime)
         except:
             return None
             

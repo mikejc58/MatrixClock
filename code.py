@@ -15,7 +15,7 @@
 # chip's square wave output.
 #
 
-VERSION={"MAJOR": 3, "MINOR": 105}
+VERSION={"MAJOR": 3, "MINOR": 6}
 verstr = '{}.{}'.format(VERSION['MAJOR'], VERSION['MINOR'])
 
 __version__ = verstr+".0-auto.0"
@@ -28,9 +28,9 @@ import busio
 import digitalio
 import json
 import displayio
-import neopixel
 import sys
 import supervisor
+import struct
 from adafruit_register import i2c_bit
 from adafruit_bus_device.i2c_device import I2CDevice
 import adafruit_lis3dh
@@ -39,8 +39,10 @@ from adafruit_bitmap_font import bitmap_font
 from adafruit_matrixportal.matrix import Matrix
 
 import console
-import clock
-import logger            
+from clock import Clock
+import logger   
+from datetime_2000 import Time2000
+         
             
 class Colors:
     def make_rgb_color(color):
@@ -91,39 +93,37 @@ class Button:
         return (pressed, pressed_time)
 
 # Class to keep track of the time
-class TimeKeeper:     
+class TimeKeeper:    
+    
+    weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+     
     def __init__(self):
-        self.blink_colon = True
-
-        self.clock = clock.Clock(i2c)
-        self.local_time_secs = time.mktime(self.clock.datetime_at_second_boundary)
-        
+        self.clock = Clock(i2c)
+        self.sync_time()
+        self.uptime = 0
 
     def update_chip(self, val):
         new_time = self.clock.update_chip(val)
         if new_time is None:
             return "Invalid date/time"
-        self.local_time_secs = new_time
+        self.sync_time()
         return None
 
+    def sync_time(self):
+        self.local_time_secs = Time2000.mktime(self.clock.datetime_at_second_boundary)
+
     # Format clock_chip data
-    def format_chip(self):
-        dstime = time.mktime(self.clock.chip.datetime)
-        return "{} {}".format(self.get_formatted_date(dstime), self.get_formatted_time(dstime))
+    def format_chip(self, weekday=True):
+        return self.get_formatted_date_time(self.clock.chip.datetime, weekday)
 
-    def get_formatted_time(self, timeis=None):
-        if not timeis:
-            timeis = self.local_time_secs
-        ts = time.localtime(timeis)
-        fmt = "{:2d}:{:02d}:{:02d}".format(ts.tm_hour, ts.tm_min, ts.tm_sec)
-        return fmt
+    def format_date_time(self, time_secs=None, weekday=True):
+        if not time_secs:
+            time_secs = self.local_time_secs
+        return self.get_formatted_date_time(Time2000.datetime(time_secs), weekday)
 
-    def get_formatted_date(self, timeis=None):
-        if not timeis:
-            timeis = self.local_time_secs
-        ts = time.localtime(timeis)
-        fmt = "{:2d}/{:02d}/{}".format(ts.tm_mon, ts.tm_mday, ts.tm_year)
-        return fmt
+    def get_formatted_date_time(self, ts, weekday):
+        week_str = '  ' + TimeKeeper.weekdays[ts.tm_wday] if weekday else ''
+        return "{:2d}/{:02d}/{:4d} {:2d}:{:02d}:{:02d}{}".format(ts.tm_mon, ts.tm_mday, ts.tm_year, ts.tm_hour, ts.tm_min, ts.tm_sec, week_str)
         
 class Command:
     def __init__(self, opts):
@@ -138,6 +138,11 @@ class Command:
         except:
             print("Invalid command")
             return False
+        
+        if parm == '?':
+            txt = cmd[5]
+            print("{} valid parameters: {}".format(key, txt))
+            return True
         
         # check for valid parameter type
         for t in cmd[0]:
@@ -161,15 +166,17 @@ class Command:
             if (v >= 0) and (v <= 23):
                 return (True, v)
         return (False, None)
-    
+
     # any string is valid, including null string
     def testStr(val):
         return (True, val)
 
-    # valid bool is true or false or null which is true
+    def testNull(val):
+        return (val == '' or val is None, val)
+
+    # valid bool is true, enable, enabled, yes, on,
+    #               false, disable, disabled, no, off
     def testBool(val):
-        if val == '':
-            return (True, True)
         for v in ('true', 'enable', 'enabled', 'yes', 'on'):
             if val == v:
                 return (True, True)
@@ -177,13 +184,13 @@ class Command:
             if val == v:
                 return (True, False)
         return (False, None)
-    
+
     # valid None is none
     def testNone(val):
         if val == 'none':
             return (True, None)
         return (False, None)
-    
+
     # validate integer
     def testInt(val):
         try:
@@ -240,13 +247,14 @@ class Options:
 
     # Replace an option's value
     def replace(self, key, val, show=True):
-        if key != 'logging' or val is False or log.AVAILABLE:
-            item = self.commands[key]
-            item[1] = val
-            self.commands[key] = item
-        
-        if key == 'rotation':
-            self.set_rotation(val)    
+        if not isinstance(val, str) or val:
+            if key != 'logging' or val is False or log.AVAILABLE:
+                item = self.commands[key]
+                item[1] = val
+                self.commands[key] = item
+            
+            if key == 'rotation':
+                self.set_rotation(val)
             
         if show:
             self.show('show', key)
@@ -266,28 +274,31 @@ class Options:
         alternate = None
         val = val.strip()
         if val:
-            # val can be 'nearest', '+xxx', '-xxx' (where xxx is sec[ond], min[ute], h[ou]r) or 'mm/dd/yyyy hh:mm:ss'
-            
-            if val[0] == '+' or val[0] == '-':
-                direction = +1 if val[0] == '+' else -1
-                unit = val[1:]
-                if unit == 'sec' or unit == 'second':
-                    val = direction
-                elif unit == 'min' or unit == 'minute':
-                    val = direction * 60
-                elif unit == 'hr' or unit == 'hour':
-                    val = direction * 3600
-                else:
-                    alternate = 'Invalid time adjustment'
-            
-            if alternate is None:
-                alternate = time_keeper.update_chip(val)
+            # val can be 'sync', 'nearest', '+xxx', '-xxx' (where xxx is sec[ond], min[ute], h[ou]r) or 'mm/dd/yyyy hh:mm:ss'
+            if val == 'sync':
+                time_keeper.sync_time()
+            else:    
+                if val[0] == '+' or val[0] == '-':
+                    direction = +1 if val[0] == '+' else -1
+                    unit = val[1:]
+                    if unit == 'sec' or unit == 'second':
+                        val = direction
+                    elif unit == 'min' or unit == 'minute':
+                        val = direction * 60
+                    elif unit == 'hr' or unit == 'hour':
+                        val = direction * 3600
+                    else:
+                        alternate = 'Invalid time adjustment'
+                
+                if alternate is None:
+                    alternate = time_keeper.update_chip(val)
                 
         if show:
             self.show('show', 'rtc', alt_text=alternate)
 
     def history(self, key, val, show=True):
         val = val.strip()
+        
         if val:
             if val == 'reset':
                 console.reset_history()
@@ -365,12 +376,34 @@ class Options:
         if item[4]:
             if alt_text:
                 val = alt_text
+            elif key == 'startup':
+                val = str(supervisor.runtime.run_reason).split('.')[2]
             elif key == 'rtc':
-                val = time_keeper.format_chip().strip()
+                val = time_keeper.format_chip().strip() + '   (' + time_keeper.clock.chip.__class__.__name__ + ')'
             elif key == 'memory':
-                val = gc.mem_free()
+                val = '{}  byte-order {}  packed {}'.format(gc.mem_free(), sys.byteorder, struct.pack('!BBBB', 127, 0, 0, 1))
             elif key == 'time':
-                val = '{} {}'.format(time_keeper.get_formatted_date(), time_keeper.get_formatted_time()).strip()
+                val = "{}".format(time_keeper.format_date_time()).strip()
+            elif key == 'uptime':
+                us = Time2000.uptime(time_keeper.uptime)
+                val = ''
+                comma = ''
+                if us.tm_days:
+                    plural = 's' if us.tm_days > 1 else ''
+                    val += '{} day{}'.format(us.tm_days, plural)
+                    comma = ', '
+                if us.tm_hours:
+                    plural = 's' if us.tm_hours > 1 else ''
+                    val += '{}{} hour{}'.format(comma, us.tm_hours, plural)
+                    comma = ', '
+                if us.tm_mins:
+                    plural = 's' if us.tm_mins > 1 else ''
+                    val += '{}{} minute{}'.format(comma, us.tm_mins, plural)
+                    comma = ', '
+                if us.tm_secs:
+                    plural = 's' if us.tm_secs > 1 else ''
+                    val += '{}{} second{}'.format(comma, us.tm_secs, plural)
+                # val = "{} days, {} hours, {} minutes, {} seconds".format(us.tm_days, us.tm_hours, us.tm_mins, us.tm_secs)
             elif key == 'history':
                 val = console.get_history()
             else:
@@ -450,7 +483,7 @@ class Display:
     # Update the time display
     def update(self):
     
-        now = time.localtime(time_keeper.local_time_secs)
+        now = Time2000.datetime(time_keeper.local_time_secs)
     
         hours = now[3]
         minutes = now[4]
@@ -515,6 +548,7 @@ class Display:
         self.colon_label.y = 14 + y_offset
         
         self.show()
+
 try:
     # setup the logger
     log = logger.log
@@ -522,9 +556,7 @@ try:
             
     # Turn off the status neopixel
     #     The neopixel is WAY too bright for a clock in a dark room
-    neoled = neopixel.NeoPixel(board.NEOPIXEL, 1)
-    neoled.brightness = 0.05
-    neoled.fill((0, 0, 0))
+    supervisor.set_rgb_status_brightness(0)
     
     i2c = busio.I2C(board.SCL, board.SDA)
     
@@ -536,26 +568,36 @@ try:
     # set up the display
     display = Display()
     
-    # --- Options setup   option        validation                         value      function         saveable  display
-    options = Options( {'24h' :      [(Command.testBool,),                 False,    Options.replace,  True,     True],
-                        'blink' :    [(Command.testBool,),                 True,     Options.replace,  True,     True],
-                        'center' :   [(Command.testBool,),                 True,     Options.replace,  True,     True],
-                        'dim' :      [(Command.testBool,),                 True,     Options.replace,  True,     True],
-                        'ampm':      [(Command.testBool,),                 True,     Options.replace,  True,     True],
-                        'color' :    [(Command.testColor,),                'track',  Options.replace,  True,     True],
-                        'night' :    [(Command.testHour,),                 22,       Options.replace,  True,     True],
-                        'day' :      [(Command.testHour,),                 6,        Options.replace,  True,     True],
-                        'logging' :  [(Command.testBool,),                 True,     Options.replace,  True,     True],
-                        'rotation' : [(Command.testRotate,),               'auto',   Options.replace,  True,     True],
-                        'rtc' :      [(Command.testStr,),                  None,     Options.rtc,      False,    True],
-                        'version' :  [(Command.testStr,),                  verstr,   Options.show,     False,    True],
-                        'memory' :   [(Command.testStr,),                  None,     Options.show,     False,    True],
-                        'time' :     [(Command.testStr,),                  None,     Options.show,     False,    True],
-                        'save' :     [(Command.testStr,),                  None,     Options.save,     False,    False],
-                        'restore' :  [(Command.testStr,),                  None,     Options.restore,  False,    False],
-                        'history' :  [(Command.testStr,),                  None,     Options.history,  False,    True],
-                        'restart' :  [(Command.testStr,),                  None,     Options.restart,  False,    False],
-                        'show' :     [(Command.testStr,),                  None,     Options.show,     False,    False]} )
+    bool_vals = 'true, enable, enabled, yes, no, false, disable, disabled, no, off'
+    hour_vals = '1 to 23'
+    color_vals = 'red, green, auto'
+    rotate_vals = '0, 180, auto'
+    rtc_vals = "'mm/dd/yyyy hh:mm:ss', sync, nearest, +sec, -sec, +min, -min, +hour, -hour"
+    history_vals = 'reset'
+    
+    
+    # --- Options setup   option        validation                          value      function         saveable  display
+    options = Options( {'24h' :      [(Command.testBool,Command.testNull),  False,    Options.replace,  True,     True,    bool_vals],
+                        'blink' :    [(Command.testBool,Command.testNull),  True,     Options.replace,  True,     True,    bool_vals],
+                        'center' :   [(Command.testBool,Command.testNull),  True,     Options.replace,  True,     True,    bool_vals],
+                        'dim' :      [(Command.testBool,Command.testNull),  True,     Options.replace,  True,     True,    bool_vals],
+                        'ampm':      [(Command.testBool,Command.testNull),  True,     Options.replace,  True,     True,    bool_vals],
+                        'color' :    [(Command.testColor,Command.testNull), 'track',  Options.replace,  True,     True,    color_vals],
+                        'night' :    [(Command.testHour,Command.testNull),  22,       Options.replace,  True,     True,    hour_vals],
+                        'day' :      [(Command.testHour,Command.testNull),  6,        Options.replace,  True,     True,    hour_vals],
+                        'logging' :  [(Command.testBool,Command.testNull),  True,     Options.replace,  True,     True,    bool_vals],
+                        'rotation' : [(Command.testRotate,Command.testNull),'auto',   Options.replace,  True,     True,    rotate_vals],
+                        'startup' :  [(Command.testNull,),                  None,     Options.show,     False,    True,    None],
+                        'rtc' :      [(Command.testStr,),                   None,     Options.rtc,      False,    True,    rtc_vals],
+                        'version' :  [(Command.testStr,),                   verstr,   Options.show,     False,    True,    None],
+                        'memory' :   [(Command.testStr,),                   None,     Options.show,     False,    True,    None],
+                        'time' :     [(Command.testStr,),                   None,     Options.show,     False,    True,    None],
+                        'uptime' :   [(Command.testNull,),                  None,     Options.show,     False,    True,    None],
+                        'save' :     [(Command.testStr,),                   None,     Options.save,     False,    False,   None],
+                        'restore' :  [(Command.testStr,),                   None,     Options.restore,  False,    False,   None],
+                        'history' :  [(Command.testStr,),                   None,     Options.history,  False,    True,    history_vals],
+                        'restart' :  [(Command.testStr,),                   None,     Options.restart,  False,    False,   None],
+                        'show' :     [(Command.testStr,),                   None,     Options.show,     False,    False,   None]} )
     
     logger.set_options(options)
     
@@ -568,15 +610,12 @@ try:
     up_button = Button(board.BUTTON_UP)
     down_button = Button(board.BUTTON_DOWN)
     
-    # Clock_chip = Clock(i2c).identify()
-    
     # Create the time_keeper 
     time_keeper = TimeKeeper()
     
     logger.set_time_keeper(time_keeper)
     
     log.message("Clock started")
-    time_keeper.local_time_secs = time.mktime(time_keeper.clock.chip.datetime)
     
     # Create the console
     console = console.Console()
@@ -590,12 +629,13 @@ try:
     while keep_going:
     
         try:
-            # just force a read of the clock chip to see if something bad happens
-            # timex = time_keeper.clock.chip.datetime
             # Check for and execute a command from the console
             timer.start
-            cmdstr = console.get_command()
+            cmdstr = console.get_line()
             if cmdstr:
+                cmdstr = cmdstr.split()
+                if len(cmdstr) == 1:
+                    cmdstr.append('')
                 command.run(cmdstr)
             # Every 50 ms: 
             # Read the buttons
@@ -622,15 +662,16 @@ try:
                 display.update()
                 
                 # Once per second, increment the time
-                if sqw:
+                if not sqw:
                     time_keeper.local_time_secs += 1
+                    time_keeper.uptime += 1
     
             # If we processed some long running operation above,
             #   update the running time (local_time_secs) from the clock_chip
             timer.stop
             if timer.diff > 300_000_000:
                 # update the time from the clock_chip
-                time_keeper.local_time_secs = time.mktime(time_keeper.clock.datetime_at_second_boundary)
+                time_keeper.sync_time()
             
         except Exception as e:
             log.message(e, add_time=False, traceback=True, exception_value=e)

@@ -64,34 +64,32 @@ class DS1307:
     _square_wave_control = i2c_bits.RWBits(5, 0x07, 0)
     """reg 0x07, bits 0:1 identify the square wave frequency, bit 4 = 1"""
     
-    _r5b7 = i2c_bit.RWBit(0x05, 7)
-    """reg 0x05, bit 7 used to distinguish among ds1307, pcf8523 and ds3231"""
-    _r10b7 = i2c_bit.RWBit(0x10, 7)
-    """reg 0x10, bit 7 used to distinguish amont ds1307, pcf8523 and ds3231"""
+    _r13b0 = i2c_bit.ROBit(0x13, 0)
+    """reg 0x13, bit 0 used to distinguish ds3231"""
+    _r3fb0 = i2c_bit.RWBit(0x3f, 0)
+    """reg 0x3f, bit 0 used to distinguish between ds1307 and pcf8523"""
 
     def __init__(self, i2c_bus):
         self.i2c_device = I2CDevice(i2c_bus, 0x68)
         chip = self.chip_identity
         expected = self.__class__.__name__
         if chip != expected:
-            raise ValueError('Expected {}, found {}'.format(expected, chip))
+            raise RuntimeError('Expected {}, found {}'.format(expected, chip))
 
     @property
     def chip_identity(self):
         """identify the RTC chip (distinguishes among DS1307, PCF8523 and DS3231)"""
-        r5b7 = self._r5b7
-        self._r5b7 = True
-        if self._r5b7:          # if r5 bit7 can be set, this must be ds3231
-            self._r5b7 = r5b7
+        try:
+            r13b0 = self._r13b0
+        except OSError:
             return 'DS3231'
-            
-        r10b7 = self._r10b7
-        self._r10b7 = True
-        if self._r10b7:         # if r10 bit7 can be set, this must be ds1307
-            self._r10b7 = r10b7
-            return 'DS1307'
-            
-        return 'PCF8523'        # must be pcf8523
+        else:
+            r3fb0 = self._r3fb0
+            self._r3fb0 = not r3fb0
+            if r3fb0 != self._r3fb0:
+                self._r3fb0 = r3fb0
+                return 'DS1307'
+        return 'PCF8523'
 
     @property
     def datetime(self):

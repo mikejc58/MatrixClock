@@ -18,7 +18,7 @@ class Logger:
         outtext = "                    - {}".format(text)
         try:
             if add_time:
-                outtext = "{} {} - {}".format(time_keeper.get_formatted_date(), time_keeper.get_formatted_time(), text)
+                outtext = "{} - {}".format(time_keeper.format_date_time(weekday=False), text)
         except NameError:
             pass
         if do_print:
