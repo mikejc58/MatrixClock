@@ -15,7 +15,7 @@
 # chip's square wave output.
 #
 
-VERSION={"MAJOR": 3, "MINOR": 6}
+VERSION={"MAJOR": 3, "MINOR": 45}
 verstr = '{}.{}'.format(VERSION['MAJOR'], VERSION['MINOR'])
 
 __version__ = verstr+".0-auto.0"
@@ -30,6 +30,7 @@ import json
 import displayio
 import sys
 import supervisor
+import microcontroller
 import struct
 from adafruit_register import i2c_bit
 from adafruit_bus_device.i2c_device import I2CDevice
@@ -42,7 +43,61 @@ import console
 from clock import Clock
 import logger   
 from datetime_2000 import Time2000
-         
+import wifi
+
+def strsplit(txt, splits=' '):
+    """ split a string at any of the characters in 'splits', but don't split
+        quoted substrings (quoted with single or double quotes) """
+    lst = []
+    accum = ''
+    state = 0
+    for ch in txt:
+        # state 0: in whitespace
+        if state == 0:
+            if ch in splits:
+                continue
+            elif ch == "'":
+                state = 2
+                accum = "'"
+            elif ch == '"':
+                state = 3
+                accum = '"'
+            else:
+                state = 1
+                accum = ch
+        # state 2: inside a quoted substrnig, quoted with single quotes
+        elif state == 2:
+            accum += ch
+            if ch == "'":
+                state = 0
+                lst.append(accum)
+                accum = ''
+        # state 3: inside a quoted substring, quoted with double quotes
+        elif state == 3:
+            accum += ch
+            if ch == '"':
+                state = 0
+                lst.append(accum)
+                accum = ''
+        # state 1: in a substring
+        elif state == 1:
+            if ch in splits:
+                lst.append(accum)
+                state = 0
+                accum = ''
+            elif ch == '"':
+                lst.append(accum)
+                state = 3
+                accum = '"'
+            elif ch == "'":
+                lst.append(accum)
+                state = 2
+                accum = "'"
+            else:
+                accum += ch
+    if accum:
+        lst.append(accum)
+    return lst
             
 class Colors:
     def make_rgb_color(color):
@@ -98,11 +153,13 @@ class TimeKeeper:
     weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
      
     def __init__(self):
+        """ construct the TimeKeeper object """
         self.clock = Clock(i2c)
         self.sync_time()
         self.uptime = 0
 
     def update_chip(self, val):
+        """ update the hardware RTC with a new date/time """
         new_time = self.clock.update_chip(val)
         if new_time is None:
             return "Invalid date/time"
@@ -110,13 +167,17 @@ class TimeKeeper:
         return None
 
     def sync_time(self):
+        """ synchronize the locallly kept time (based on counting the SQW transitions) 
+            with the time from the hardware RTC """
         self.local_time_secs = Time2000.mktime(self.clock.datetime_at_second_boundary)
 
     # Format clock_chip data
     def format_chip(self, weekday=True):
+        """ format the date/time from the hardware RTC for printing """
         return self.get_formatted_date_time(self.clock.chip.datetime, weekday)
 
     def format_date_time(self, time_secs=None, weekday=True):
+        """ format a time (seconds since Jan 1, 2000) for printing """
         if not time_secs:
             time_secs = self.local_time_secs
         return self.get_formatted_date_time(Time2000.datetime(time_secs), weekday)
@@ -130,18 +191,19 @@ class Command:
         self.options = opts
     
     def run(self, cmdstr):
+        """ run a command from the serial console, or from a network socket """
         key = cmdstr[0]
         parm = ' '.join(cmdstr[1:])
         try:
             # Lookup command name in dictionary
             cmd = self.options.commands[key]
         except:
-            print("Invalid command")
+            log.print("Invalid command")
             return False
         
         if parm == '?':
             txt = cmd[5]
-            print("{} valid parameters: {}".format(key, txt))
+            log.print("{} valid parameters: {}".format(key, txt))
             return True
         
         # check for valid parameter type
@@ -149,14 +211,14 @@ class Command:
             try:
                 valid, val = t(parm)
             except:
-                print("No parameter")
+                log.print("No parameter")
                 return False
             # if parameter type is valid, execute the command
             if valid:
                 cmd[2](self.options, key, val)
                 break
         if not valid:
-            print("Invalid parameter")
+            log.print("Invalid parameter")
         return valid
 
     # valid hour is int, between 0 and 23
@@ -170,6 +232,14 @@ class Command:
     # any string is valid, including null string
     def testStr(val):
         return (True, val)
+        
+    # a pair of strings
+    def testPair(val):
+        if isinstance(val, str):
+            lst = strsplit(val, ' ,:;')
+            if len(lst) == 2:
+                return (True, (lst[0], lst[1]))
+        return (False, None)
 
     def testNull(val):
         return (val == '' or val is None, val)
@@ -296,15 +366,6 @@ class Options:
         if show:
             self.show('show', 'rtc', alt_text=alternate)
 
-    def history(self, key, val, show=True):
-        val = val.strip()
-        
-        if val:
-            if val == 'reset':
-                console.reset_history()
-        if show:
-            self.show('show', 'history')
-                
     def save(self, key, fname, show=True):
         if not fname:
             fname = Options.DEFAULT_FILE
@@ -330,6 +391,7 @@ class Options:
 
     def restart(self, key, val):
         log.message("Restarting MatrixClock")
+        esp_mgr.disconnect_from_socket()
         time_keeper.clock.chip.square_wave_frequency = 0
         time_keeper.clock.sqw.deinit()
         supervisor.reload()
@@ -355,6 +417,65 @@ class Options:
             else:
                 txt = txt[0]
             log.message(txt.strip())
+    
+    def join(self, key, val, show=True):
+        ssid = None
+        passwd = None
+        if val:
+            lst = strsplit(val, ' ,:;')
+            try:
+                ssid = lst[0]
+                try:
+                    passwd = lst[1]
+                except IndexError:
+                    log.print("No password specified")
+            except IndexError:
+                log.print("Invalid ssid '{}'".format(val))
+        else:
+            ssid, passwd = self.commands['network'][1]
+            
+        if ssid and passwd:
+            if esp_mgr.connect_to_ap(ssid, passwd):
+                log.message("Joined with {}".format(ssid))
+            else:
+                log.message("Join with {} failed".format(ssid))
+        else:
+            log.print("No network specified")
+            
+    def connect(self, key, val, show=True):
+        if not esp_mgr.ap:
+            self.join(None, None)
+            
+        host = None
+        if val:
+            lst = strsplit(val, ' ,:;')
+            try:
+                host = lst[0]
+                try:
+                    port = lst[1]
+                except IndexError:
+                    port = '65432'
+            except IndexError:
+                log.print("Invalid host '{}'".format(val))
+        else:
+            host, port = self.commands['host'][1]
+        
+        if host and port:    
+            try:
+                port = int(port)
+            except ValueError:
+                log.print("Invalid port '{}'".format(port))
+            actual_port = esp_mgr.connect_to_socket(host, port)
+            if actual_port:
+                log.message("Connected to {}:{}".format(host, actual_port))
+            else:
+                log.message("Connection to {}:{} failed".format(host, port))
+        else:
+            log.print("No host:port specified")
+ 
+    def bye(self, key, val, show=False):
+        """ disconnect from socket """
+        esp_mgr.disconnect_from_socket()
 
     # Show an option by key, or all options
     def show(self, cc, key, alt_text=None):
@@ -370,7 +491,7 @@ class Options:
                 item = self.commands[key]
                 self.show_item(key, item, alt_text)
             except:
-                print("Invalid Option")
+                log.print("Invalid Option")
 
     def show_item(self, key, item, alt_text):
         if item[4]:
@@ -403,12 +524,13 @@ class Options:
                 if us.tm_secs:
                     plural = 's' if us.tm_secs > 1 else ''
                     val += '{}{} second{}'.format(comma, us.tm_secs, plural)
-                # val = "{} days, {} hours, {} minutes, {} seconds".format(us.tm_days, us.tm_hours, us.tm_mins, us.tm_secs)
-            elif key == 'history':
-                val = console.get_history()
+            elif key == 'network':
+                ssid, passwd = item[1]
+                passwd = '*' * len(passwd)
+                val = "['{}'], ['{}']".format(ssid, passwd)
             else:
                 val = item[1]
-            print('{:9s} is {}'.format(key, val))
+            log.print('{:9s} is {}'.format(key, val))
 
 class Timer:
     def __init__(self):
@@ -482,7 +604,7 @@ class Display:
             
     # Update the time display
     def update(self):
-    
+        """ update the RGB Matrix display with the current time """
         now = Time2000.datetime(time_keeper.local_time_secs)
     
         hours = now[3]
@@ -549,18 +671,19 @@ class Display:
         
         self.show()
 
+#  Start of main program
+
 try:
     # setup the logger
     log = logger.log
-    log.message("MatrixClock Version   {}".format(verstr))
-            
+           
     # Turn off the status neopixel
     #     The neopixel is WAY too bright for a clock in a dark room
     supervisor.set_rgb_status_brightness(0)
     
     i2c = busio.I2C(board.SCL, board.SDA)
     
-    # setup the accelerameter for later use
+    # setup the accelerameter
     lis3dh = adafruit_lis3dh.LIS3DH_I2C(i2c, address=0x19)
     _ = lis3dh.acceleration
     time.sleep(0.1)
@@ -595,8 +718,12 @@ try:
                         'uptime' :   [(Command.testNull,),                  None,     Options.show,     False,    True,    None],
                         'save' :     [(Command.testStr,),                   None,     Options.save,     False,    False,   None],
                         'restore' :  [(Command.testStr,),                   None,     Options.restore,  False,    False,   None],
-                        'history' :  [(Command.testStr,),                   None,     Options.history,  False,    True,    history_vals],
                         'restart' :  [(Command.testStr,),                   None,     Options.restart,  False,    False,   None],
+                        'connect' :  [(Command.testStr,),                   None,     Options.connect,  False,    False,   None],
+                        'host'    :  [(Command.testPair,Command.testNull), (None, None), Options.replace,  True,     True,    None],
+                        'join'    :  [(Command.testStr,),                   None,     Options.join,     False,    False,   None],
+                        'network' :  [(Command.testPair,Command.testNull), (None, None), Options.replace,  True,     True,    None],
+                        'bye'     :  [(Command.testNull,),                  None,     Options.bye,      False,    False,   None],
                         'show' :     [(Command.testStr,),                   None,     Options.show,     False,    False,   None]} )
     
     logger.set_options(options)
@@ -615,20 +742,34 @@ try:
     
     logger.set_time_keeper(time_keeper)
     
+    log.message("MatrixClock Version   {}".format(verstr))
+    
+    # Setup the WiFi
+    esp_mgr = wifi.ESP_manager('Clock')
+    logger.set_esp_mgr(esp_mgr)
+ 
+    major, minor, sub = sys.implementation.version
+    log.message("Circuitpython {}.{}.{}".format(major, minor, sub))
+    log.message("ESP32 firmware {}".format(esp_mgr.firmware_version))
+
+     
     log.message("Clock started")
     
     # Create the console
     console = console.Console()
     
+   
     # Loop forever, get commands, check buttons, and update the display
     keep_going = True
     inpbuffer = ''
     last_sqw = False
     timer = Timer()
-
+    time_keeper.sync_time()
     while keep_going:
     
         try:
+            # Every 50 ms: 
+            
             # Check for and execute a command from the console
             timer.start
             cmdstr = console.get_line()
@@ -637,18 +778,36 @@ try:
                 if len(cmdstr) == 1:
                     cmdstr.append('')
                 command.run(cmdstr)
-            # Every 50 ms: 
-            # Read the buttons
+            
+            # Check for and execute a command from socket
+            cmdstr = esp_mgr.get_line()
+            if cmdstr:
+                cmdstr = cmdstr.split()
+                if len(cmdstr) == 1:
+                    cmdstr.append('')
+                command.run(cmdstr)
              
+            # Read the buttons
             pressed, pressed_time = up_button.read()
             # check if button just released
             if not pressed and pressed_time is not None:
                 # button was pressed and released
                 if pressed_time > 2.0:
-                    print("Long press {} seconds".format(pressed_time))
+                    log.print("Long press {} seconds".format(pressed_time))
                 else:
                     # adjust clock to nearest minute
-                    options.clock_chip(None, 'nearest')
+                    options.rtc(None, 'nearest')
+                        
+            pressed, pressed_time = down_button.read()
+            # check if button just released
+            if not pressed and pressed_time is not None:
+                # button was pressed and released
+                if pressed_time > 2.0:
+                    log.print("Long press {} seconds".format(pressed_time))
+                else:
+                    # connect via socket to command terminal
+                    # using default ssid/password and host/port from defaults.json
+                    options.connect(None, None)
                         
             # Update the display time every 1/2 second
             # so that when using a blinking

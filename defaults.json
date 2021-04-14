@@ -1,0 +1,12 @@
+{"network": ["corrigan", "2eee260310"], 
+"host": ["raspberrypi.lan", "65432"], 
+"color": "track", 
+"dim": true, 
+"rotation": "auto",
+"ampm": true, 
+"day": 6, 
+"night": 22, 
+"center": true, 
+"blink": true, 
+"logging": true, 
+"24h": false}
