@@ -15,7 +15,7 @@
 # chip's square wave output.
 #
 
-VERSION={"MAJOR": 3, "MINOR": 45}
+VERSION={"MAJOR": 3, "MINOR": 55}
 verstr = '{}.{}'.format(VERSION['MAJOR'], VERSION['MINOR'])
 
 __version__ = verstr+".0-auto.0"
@@ -44,6 +44,7 @@ from clock import Clock
 import logger   
 from datetime_2000 import Time2000
 import wifi
+import telnet
 
 def strsplit(txt, splits=' '):
     """ split a string at any of the characters in 'splits', but don't split
@@ -391,7 +392,7 @@ class Options:
 
     def restart(self, key, val):
         log.message("Restarting MatrixClock")
-        esp_mgr.disconnect_from_socket()
+        # esp_mgr.disconnect_from_socket()
         time_keeper.clock.chip.square_wave_frequency = 0
         time_keeper.clock.sqw.deinit()
         supervisor.reload()
@@ -499,10 +500,12 @@ class Options:
                 val = alt_text
             elif key == 'startup':
                 val = str(supervisor.runtime.run_reason).split('.')[2]
+            elif key == 'version':
+                val = ver_str
             elif key == 'rtc':
                 val = time_keeper.format_chip().strip() + '   (' + time_keeper.clock.chip.__class__.__name__ + ')'
             elif key == 'memory':
-                val = '{}  byte-order {}  packed {}'.format(gc.mem_free(), sys.byteorder, struct.pack('!BBBB', 127, 0, 0, 1))
+                val = '{}'.format(gc.mem_free())
             elif key == 'time':
                 val = "{}".format(time_keeper.format_date_time()).strip()
             elif key == 'uptime':
@@ -697,7 +700,7 @@ try:
     rotate_vals = '0, 180, auto'
     rtc_vals = "'mm/dd/yyyy hh:mm:ss', sync, nearest, +sec, -sec, +min, -min, +hour, -hour"
     history_vals = 'reset'
-    
+    ver_str = ''
     
     # --- Options setup   option        validation                          value      function         saveable  display
     options = Options( {'24h' :      [(Command.testBool,Command.testNull),  False,    Options.replace,  True,     True,    bool_vals],
@@ -712,7 +715,7 @@ try:
                         'rotation' : [(Command.testRotate,Command.testNull),'auto',   Options.replace,  True,     True,    rotate_vals],
                         'startup' :  [(Command.testNull,),                  None,     Options.show,     False,    True,    None],
                         'rtc' :      [(Command.testStr,),                   None,     Options.rtc,      False,    True,    rtc_vals],
-                        'version' :  [(Command.testStr,),                   verstr,   Options.show,     False,    True,    None],
+                        'version' :  [(Command.testStr,),                   ver_str,  Options.show,     False,    True,    None],
                         'memory' :   [(Command.testStr,),                   None,     Options.show,     False,    True,    None],
                         'time' :     [(Command.testStr,),                   None,     Options.show,     False,    True,    None],
                         'uptime' :   [(Command.testNull,),                  None,     Options.show,     False,    True,    None],
@@ -746,12 +749,16 @@ try:
     
     # Setup the WiFi
     esp_mgr = wifi.ESP_manager('Clock')
-    logger.set_esp_mgr(esp_mgr)
  
     major, minor, sub = sys.implementation.version
     log.message("Circuitpython {}.{}.{}".format(major, minor, sub))
     log.message("ESP32 firmware {}".format(esp_mgr.firmware_version))
+    ver_str = "{}  Circuitpython {}.{}.{}  ESP32 Nina {}".format(verstr, major, minor, sub, esp_mgr.firmware_version)
 
+    options.join(None, None)
+    
+    telnetD = telnet.TelnetD(esp_mgr)
+    logger.set_telnetD(telnetD)
      
     log.message("Clock started")
     
@@ -765,6 +772,7 @@ try:
     last_sqw = False
     timer = Timer()
     time_keeper.sync_time()
+    prev_state = ''
     while keep_going:
     
         try:
@@ -779,13 +787,27 @@ try:
                     cmdstr.append('')
                 command.run(cmdstr)
             
-            # Check for and execute a command from socket
-            cmdstr = esp_mgr.get_line()
+            # # Check for and execute a command from socket
+            # cmdstr = esp_mgr.get_line()
+            # if cmdstr:
+                # cmdstr = cmdstr.split()
+                # if len(cmdstr) == 1:
+                    # cmdstr.append('')
+                # command.run(cmdstr)
+                
+            # Check for telnet client commands
+            cmdstr = telnetD.get_cmd()
             if cmdstr:
                 cmdstr = cmdstr.split()
                 if len(cmdstr) == 1:
                     cmdstr.append('')
                 command.run(cmdstr)
+                
+            state = telnetD.check_client()
+            if state != prev_state:
+                prev_state = state
+                print(state)
+            
              
             # Read the buttons
             pressed, pressed_time = up_button.read()
@@ -833,7 +855,7 @@ try:
                 time_keeper.sync_time()
             
         except Exception as e:
-            log.message(e, add_time=False, traceback=True, exception_value=e)
+            log.message(str(e), add_time=False, traceback=True, exception_value=e)
                 
             supervisor.reload()
 

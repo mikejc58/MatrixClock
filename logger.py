@@ -9,9 +9,9 @@ def set_time_keeper(tk):
     global time_keeper
     time_keeper = tk
 
-def set_esp_mgr(espmgr):
-    global esp_mgr
-    esp_mgr = espmgr
+def set_telnetD(telnetd):
+    global telnetD
+    telnetD = telnetd
     
 class Logger:
     def __init__(self):
@@ -31,7 +31,7 @@ class Logger:
         if do_print:
             print(outtext)
             try:
-                esp_mgr.send_to_socket(outtext)
+                telnetD.text_to_client(outtext)
             except NameError:
                 pass
             if traceback:
