@@ -84,6 +84,9 @@ directory of the Matrix Portal's CIRCUITPY drive:
 * clock.py
 * console.py
 * logger.py
+* wifi.py
+* datetime_2000.py
+* defaults.json
 * IBMPlexMono-Medium-24_jep.bdf
 * One (or all) of:
    adafruit_ds3231.py
@@ -100,4 +103,6 @@ should be stored in the /lib directory of the CIRCUITPY drive.
 *  adafruit_display_text
 *  adafruit_bus_device
 *  adafruit_bitmap_font
+*  adafruit_esp32spi
   
+### Operation
