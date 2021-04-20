@@ -8,4 +8,5 @@
 "center": true, 
 "blink": true, 
 "logging": true, 
+"autojoin": true,
 "24h": false}

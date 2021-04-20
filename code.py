@@ -15,7 +15,7 @@
 # chip's square wave output.
 #
 
-VERSION={"MAJOR": 3, "MINOR": 4}
+VERSION={"MAJOR": 3, "MINOR": 8}
 verstr = '{}.{}'.format(VERSION['MAJOR'], VERSION['MINOR'])
 
 __version__ = verstr+".0-auto.0"
@@ -502,7 +502,7 @@ class Options:
             elif key == 'network':
                 ssid, passwd = item[1]
                 passwd = '*' * len(passwd)
-                val = "['{}'], ['{}']".format(ssid, passwd)
+                val = "{}, {}".format(ssid, passwd)
             else:
                 val = item[1]
             log.print('{:9s} is {}'.format(key, val))
@@ -666,7 +666,7 @@ try:
     # set up the display
     display = Display()
     
-    bool_vals = 'true, enable, enabled, yes, no, false, disable, disabled, no, off'
+    bool_vals = 'true, enable, enabled, yes, on, false, disable, disabled, no, off'
     hour_vals = '1 to 23'
     color_vals = 'red, green, auto'
     rotate_vals = '0, 180, auto'
@@ -695,6 +695,7 @@ try:
                         'restore' :  [(Command.testStr,),                   None,     Options.restore,  False,    False,   None],
                         'restart' :  [(Command.testStr,),                   None,     Options.restart,  False,    False,   None],
                         'join'    :  [(Command.testStr,),                   None,     Options.join,     False,    False,   None],
+                        'autojoin':  [(Command.testBool,Command.testNull),  True,     Options.replace,  True,     True,    bool_vals],
                         'network' :  [(Command.testPair,Command.testNull), (None, None), Options.replace,True,    True,    None],
                         'connected': [(Command.testNull),                   None,     Options.show,     False,    True,    None],
                         'telnet':    [(Command.testNull),                   None,     Options.show,     False,    True,    None],
@@ -730,7 +731,9 @@ try:
     logger.set_telnetD(telnetD)
     
     # if a network is configured, join it and start telnet server
-    options.join(None, None)
+    
+    if options.get('autojoin'):
+        options.join(None, None)
     
     log.message("Clock started")
     

@@ -147,7 +147,6 @@ class Console:
         line_str = None
         while supervisor.runtime.serial_bytes_available:
             ch = sys.stdin.read(1)
-            
             if self.escape:
                 # continue the escape sequence
                 self._continue_escape(ch)
