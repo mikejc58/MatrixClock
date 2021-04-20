@@ -2,7 +2,6 @@ import board
 from digitalio import DigitalInOut
 import busio
 from adafruit_esp32spi import adafruit_esp32spi
-# from adafruit_esp32spi import adafruit_esp32spi_socket
 import time
 
 import logger
@@ -15,7 +14,6 @@ class ESP_manager:
         self.reset_pin = DigitalInOut(board.ESP_RESET)
         self.esp = adafruit_esp32spi.ESP_SPIcontrol( 
                 self.spi, self.cs_pin, self.ready_pin, self.reset_pin)
-        # adafruit_esp32spi_socket.set_interface(self.esp)
                 
         self.nickname = nickname
         self.ap = False
@@ -24,7 +22,15 @@ class ESP_manager:
     @property
     def firmware_version(self):
         return str(self.esp.firmware_version, 'utf-8')
-
+        
+    def connect_status(self):
+        txt = ''
+        if self.ap:
+            ssid = str(self.esp.ssid, 'utf-8')
+            rssi = self.esp.rssi
+            txt = '{}  {}  {} dBm'.format(ssid, self.esp.pretty_ip(self.esp.ip_address), rssi)
+        return txt
+    
     def connect_to_ap(self, ssid, password):
         self.disconnect_from_ap()
         if self.esp.status == adafruit_esp32spi.WL_IDLE_STATUS:

@@ -1,4 +1,5 @@
 from adafruit_esp32spi import adafruit_esp32spi_socket
+import time
 
 telnet_printable = 'abcdefghijklmnopqrstuvwxyz' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + '0123456789' +  \
                    " (%&'()*+, -./!" + '"#$:;?| @[\]^_`{}~)' + '\n'
@@ -27,7 +28,7 @@ telnet_opt_codes = {'Echo': 1, 'Suppress GA': 3, 'Status': 5, 'Timing Mark': 6, 
 
 class TelnetD:
     def __init__(self, esp_mgr):
-        """ create the TelnetD object and start the server """
+        """ create the TelnetD object """
         self.esp_mgr = esp_mgr
         adafruit_esp32spi_socket.set_interface(self.esp_mgr.esp)
         self.inbuffer = ''
@@ -37,7 +38,11 @@ class TelnetD:
         self.client_socket = None
         self.server_socket = None
         self.termious = None        # termious hack
-        self._start_server()
+        self.current_state = ''
+
+    @property
+    def state(self):
+        return self.current_state
 
     def text_to_client(self, txt):
         """ send a line to the telnet client (add \r\n) """
@@ -146,48 +151,53 @@ class TelnetD:
     
     def _close_client(self):
         """ close the client socket """
-        if self.client_socket.socknum != adafruit_esp32spi_socket.NO_SOCKET_AVAIL:
+        if self.client_socket and self.client_socket.socknum != adafruit_esp32spi_socket.NO_SOCKET_AVAIL:
             self.client_socket.close()
         self.client_socket = None
-        
+    
             
-    def _start_server(self):
+    def start_server(self):
         """ start the telnet server listening on port 23 """
-        self.server_socket = adafruit_esp32spi_socket.socket()
-        self.esp_mgr.esp.start_server(23, self.server_socket.socknum)
+        if self.esp_mgr.ap:
+            self.server_socket = adafruit_esp32spi_socket.socket()
+            self.esp_mgr.esp.start_server(23, self.server_socket.socknum)
         
     def check_client(self):
         """ if a client telnet is connected, check for input.
             if there is no client, check for new connections """
-        ret_val = None
-        if self.client_socket:
-            # client exists
-            ret_val = "Connected"
-            if self.client_socket.connected():
-                if self.client_socket.available():
-                    data = self.client_socket.recv()
-                    if data:
-                        self._add_to_buffer(data)
-                    else:
-                        self._close_client()
+        self.current_state = "No Network"
+        if self.esp_mgr.ap:
+            if self.client_socket:
+                # client exists
+                self.current_state = "Connected"
+                if self.client_socket.connected():
+                    if self.client_socket.available():
+                        data = self.client_socket.recv()
+                        if data:
+                            self._add_to_buffer(data)
+                        else:
+                            self._close_client()
+                    if time.monotonic() > self.test_connection:
+                        data = bytes([0])
+                        self.send_to_client(data)
+                else:
+                    self._close_client()
+                    
             else:
-                self._close_client()
-                
-        else:
-            # check for new client
-            ret_val = "Listening"
-            # reset termious hack
-            self.termious = None
-            client_sock_num = self.esp_mgr.esp.socket_available(self.server_socket.socknum)
-            if client_sock_num != adafruit_esp32spi_socket.NO_SOCKET_AVAIL:
-                # new connection
-                ret_val = "Connected"
-                
-                self.client_socket = adafruit_esp32spi_socket.socket(socknum=client_sock_num)
-                
-                self.send_telnet_command([telnet_IAC, telnet_cmd_codes['WONT'], telnet_opt_codes['Echo']])
-                self.send_telnet_command([telnet_IAC, telnet_cmd_codes['WONT'], telnet_opt_codes['Suppress GA']])
-        return ret_val
+                # check for new client
+                self.current_state = "Listening  port 23"
+                # reset termious hack
+                self.termious = None
+                client_sock_num = self.esp_mgr.esp.socket_available(self.server_socket.socknum)
+                if client_sock_num != adafruit_esp32spi_socket.NO_SOCKET_AVAIL:
+                    # new connection
+                    self.current_state = "Connected"
+                    self.test_connection = time.monotonic() + 5
+                    self.client_socket = adafruit_esp32spi_socket.socket(socknum=client_sock_num)
+                    
+                    self.send_telnet_command([telnet_IAC, telnet_cmd_codes['WONT'], telnet_opt_codes['Echo']])
+                    self.send_telnet_command([telnet_IAC, telnet_cmd_codes['WONT'], telnet_opt_codes['Suppress GA']])
+        return self.current_state
             
     def handle_telnet_cmd(self, telnet_cmd):
         """ process telnet command from the client telnet """

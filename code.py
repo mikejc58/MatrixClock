@@ -15,7 +15,7 @@
 # chip's square wave output.
 #
 
-VERSION={"MAJOR": 3, "MINOR": 55}
+VERSION={"MAJOR": 3, "MINOR": 4}
 verstr = '{}.{}'.format(VERSION['MAJOR'], VERSION['MINOR'])
 
 __version__ = verstr+".0-auto.0"
@@ -199,7 +199,7 @@ class Command:
             # Lookup command name in dictionary
             cmd = self.options.commands[key]
         except:
-            log.print("Invalid command")
+            log.print("Invalid command  {}".format(key))
             return False
         
         if parm == '?':
@@ -392,7 +392,6 @@ class Options:
 
     def restart(self, key, val):
         log.message("Restarting MatrixClock")
-        # esp_mgr.disconnect_from_socket()
         time_keeper.clock.chip.square_wave_frequency = 0
         time_keeper.clock.sqw.deinit()
         supervisor.reload()
@@ -420,6 +419,8 @@ class Options:
             log.message(txt.strip())
     
     def join(self, key, val, show=True):
+        if esp_mgr.ap:
+            esp_mgr.disconnect_from_ap()
         ssid = None
         passwd = None
         if val:
@@ -435,49 +436,16 @@ class Options:
         else:
             ssid, passwd = self.commands['network'][1]
             
-        if ssid and passwd:
+        if ssid and ssid != 'ssid' and passwd:
             if esp_mgr.connect_to_ap(ssid, passwd):
                 log.message("Joined with {}".format(ssid))
+                # start telnet server
+                telnetD.start_server()
             else:
                 log.message("Join with {} failed".format(ssid))
         else:
-            log.print("No network specified")
+            log.message("No network configured")
             
-    def connect(self, key, val, show=True):
-        if not esp_mgr.ap:
-            self.join(None, None)
-            
-        host = None
-        if val:
-            lst = strsplit(val, ' ,:;')
-            try:
-                host = lst[0]
-                try:
-                    port = lst[1]
-                except IndexError:
-                    port = '65432'
-            except IndexError:
-                log.print("Invalid host '{}'".format(val))
-        else:
-            host, port = self.commands['host'][1]
-        
-        if host and port:    
-            try:
-                port = int(port)
-            except ValueError:
-                log.print("Invalid port '{}'".format(port))
-            actual_port = esp_mgr.connect_to_socket(host, port)
-            if actual_port:
-                log.message("Connected to {}:{}".format(host, actual_port))
-            else:
-                log.message("Connection to {}:{} failed".format(host, port))
-        else:
-            log.print("No host:port specified")
- 
-    def bye(self, key, val, show=False):
-        """ disconnect from socket """
-        esp_mgr.disconnect_from_socket()
-
     # Show an option by key, or all options
     def show(self, cc, key, alt_text=None):
         if cc != 'show':
@@ -500,6 +468,10 @@ class Options:
                 val = alt_text
             elif key == 'startup':
                 val = str(supervisor.runtime.run_reason).split('.')[2]
+            elif key == 'connected':
+                val = esp_mgr.connect_status()
+            elif key == 'telnet':
+                val = telnetD.state
             elif key == 'version':
                 val = ver_str
             elif key == 'rtc':
@@ -722,11 +694,10 @@ try:
                         'save' :     [(Command.testStr,),                   None,     Options.save,     False,    False,   None],
                         'restore' :  [(Command.testStr,),                   None,     Options.restore,  False,    False,   None],
                         'restart' :  [(Command.testStr,),                   None,     Options.restart,  False,    False,   None],
-                        'connect' :  [(Command.testStr,),                   None,     Options.connect,  False,    False,   None],
-                        'host'    :  [(Command.testPair,Command.testNull), (None, None), Options.replace,  True,     True,    None],
                         'join'    :  [(Command.testStr,),                   None,     Options.join,     False,    False,   None],
-                        'network' :  [(Command.testPair,Command.testNull), (None, None), Options.replace,  True,     True,    None],
-                        'bye'     :  [(Command.testNull,),                  None,     Options.bye,      False,    False,   None],
+                        'network' :  [(Command.testPair,Command.testNull), (None, None), Options.replace,True,    True,    None],
+                        'connected': [(Command.testNull),                   None,     Options.show,     False,    True,    None],
+                        'telnet':    [(Command.testNull),                   None,     Options.show,     False,    True,    None],
                         'show' :     [(Command.testStr,),                   None,     Options.show,     False,    False,   None]} )
     
     logger.set_options(options)
@@ -755,17 +726,17 @@ try:
     log.message("ESP32 firmware {}".format(esp_mgr.firmware_version))
     ver_str = "{}  Circuitpython {}.{}.{}  ESP32 Nina {}".format(verstr, major, minor, sub, esp_mgr.firmware_version)
 
-    options.join(None, None)
-    
     telnetD = telnet.TelnetD(esp_mgr)
     logger.set_telnetD(telnetD)
-     
+    
+    # if a network is configured, join it and start telnet server
+    options.join(None, None)
+    
     log.message("Clock started")
     
     # Create the console
     console = console.Console()
-    
-   
+
     # Loop forever, get commands, check buttons, and update the display
     keep_going = True
     inpbuffer = ''
@@ -787,14 +758,6 @@ try:
                     cmdstr.append('')
                 command.run(cmdstr)
             
-            # # Check for and execute a command from socket
-            # cmdstr = esp_mgr.get_line()
-            # if cmdstr:
-                # cmdstr = cmdstr.split()
-                # if len(cmdstr) == 1:
-                    # cmdstr.append('')
-                # command.run(cmdstr)
-                
             # Check for telnet client commands
             cmdstr = telnetD.get_cmd()
             if cmdstr:
@@ -807,8 +770,7 @@ try:
             if state != prev_state:
                 prev_state = state
                 print(state)
-            
-             
+
             # Read the buttons
             pressed, pressed_time = up_button.read()
             # check if button just released

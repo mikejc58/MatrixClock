@@ -8,11 +8,14 @@
 # When the line is completed with the 'enter' key it then returns
 # the line as a string
 
+# Console has been tested with tio (simple terminal editor) and
+# with the Mu Editor and works well with them.  It may work with
+# others as well.
+
 import supervisor
 import sys
 
 class Console:
-    # normalchars = '0123456789/: abcdefghijklmnopqrstuvwxyz'
     escape_tree = {'[': {'A':           'uparrow',      # 0x1b5d41
                          'B':           'downarrow',    # 0x1b5d42
                          'C':           'rightarrow',   # 0x1b5d43
@@ -48,32 +51,43 @@ class Console:
         """reset the accumulated input buffer to null"""
         self.inbuffer = ''
         self.cursor = 0
+        self.edited = False
+        
+    def _fill_inbuffer(self, cmd):
+        """fill the input buffer with a command"""
+        self.inbuffer = cmd
+        self.cursor = len(cmd)
+        self.edited = False
     
     @staticmethod
-    def _show(buf, cursor):
+    def _show(buf, new_cursor, current_cursor):
         """show the buffer and position the cursor"""
-        print("\r{} \r{}".format(buf, Console.seq['rightarrow']*cursor), end='')
+        print("{}{}{}".format(Console.seq['leftarrow']*(current_cursor), buf, 
+                              Console.seq['leftarrow']*(len(buf)-new_cursor)), end='')
 
     @staticmethod
     def _erase_and_show(oldlen, buf, cursor):
         """erase the line (for oldlen) and show the buffer and position the cursor"""
-        print("\r{}\r".format(' '*oldlen), end='')
-        Console._show(buf, cursor)
+        print("{}{}".format(Console.seq['leftarrow']*oldlen, ' '*oldlen), end='')
+        Console._show(buf, cursor, oldlen)
     
-    def _delete_and_show(self):
+    def _delete_and_show(self, current_cursor):
         """delete a character at the cursor position and show the result"""
+        self.edited = True
         self.inbuffer = self.inbuffer[:self.cursor] + self.inbuffer[self.cursor+1:]
-        Console._show(self.inbuffer, self.cursor)
+        Console._show(self.inbuffer+' ', self.cursor, current_cursor)
         
     def _insert_and_show(self, ch):
         """insert a character at the cursor position and show the result"""
+        self.edited = True
         self.inbuffer = self.inbuffer[:self.cursor] + ch + self.inbuffer[self.cursor:]
+        currrent_cursor = self.cursor
         self.cursor += 1
-        Console._show(self.inbuffer, self.cursor)
+        Console._show(self.inbuffer, self.cursor, currrent_cursor)
 
     def _add_to_history(self, buf):
         """add a line to the history buffer"""
-        if buf != self.history[0]:
+        if self.edited and buf != self.history[0]:
             self.history.insert(0, buf)
             if len(self.history) > Console.max_history:
                 self.history.pop()
@@ -88,8 +102,7 @@ class Console:
                 if nxt == 'uparrow':
                     if len(self.history) > self.history_pos:
                         oldlen = len(self.inbuffer)
-                        self.inbuffer = self.history[self.history_pos-1]
-                        self.cursor = len(self.inbuffer)
+                        self._fill_inbuffer(self.history[self.history_pos-1])
                         self.history_pos += 1
                         Console._erase_and_show(oldlen, self.inbuffer, self.cursor)
                         
@@ -98,8 +111,7 @@ class Console:
                     if self.history_pos > 1:
                         self.history_pos -= 1
                         if self.history_pos > 1:
-                            self.inbuffer = self.history[self.history_pos-2]
-                            self.cursor = len(self.inbuffer)
+                            self._fill_inbuffer(self.history[self.history_pos-2])
                         else:
                             self._reset_inbuffer()
                     else:
@@ -109,7 +121,6 @@ class Console:
                 elif nxt == 'leftarrow':
                     if self.cursor > 0:
                         print(Console.seq['leftarrow'], end='')
-                    # if self.cursor > 0:
                         self.cursor -= 1
                         
                 elif nxt == 'rightarrow':
@@ -119,7 +130,7 @@ class Console:
                         
                 elif nxt == 'delete':
                     if self.cursor < len(self.inbuffer):
-                        self._delete_and_show()                        
+                        self._delete_and_show(self.cursor)                        
                         
             else:
                 # go to next level in escape sequence
@@ -147,10 +158,11 @@ class Console:
                 self.escape = Console.escape_tree
                 
             # handle backspace
-            elif ch[0] == '\x7f':
+            elif ch[0] == '\x7f' or ch[0] == '\x08':
                 if self.cursor > 0:
+                    current_cursor = self.cursor
                     self.cursor -= 1
-                    self._delete_and_show()
+                    self._delete_and_show(current_cursor)
                     
             # handle newline
             elif ch[0] == '\n':

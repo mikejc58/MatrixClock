@@ -1,5 +1,4 @@
-{"network": ["corrigan", "2eee260310"], 
-"host": ["raspberrypi.lan", "65432"], 
+{"network": ["ssid", "password"],  
 "color": "track", 
 "dim": true, 
 "rotation": "auto",

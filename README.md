@@ -40,6 +40,9 @@ The support modules (included in this repo) for the chips are:
 * adafruit_ds1307
 * adafruit_pcf8523
 
+Use the versions provided here, the modules in the adafruit bundle 
+do not allow configuring the square wave output of the chips.
+
 MatrixClock will identify which clock chip you have and load
 the appropriate module.  You only need to place the appropriate
 module (or all of them) on the CIRCUITPY drive.  MatrixClock will
@@ -52,8 +55,8 @@ displays that Adafruit sells, and it works very well with
 them.  Any of the 64x32 displays can be used.
 
 ### Code
-code.py, clock.py, console.py, and logger.py contain the logic
-of the clock.
+code.py, clock.py, console.py, wifi.py, telnet.py, datetime_2000.py, 
+and logger.py contain the logic of the clock.
 
 boot.py gets control on a hard reset and does two things:  
 
@@ -61,13 +64,14 @@ boot.py gets control on a hard reset and does two things:
 sometimes causes the CIRCUITPY drive to become read-only.
 2. It reads the DOWN button on the Matrix Portal and, if the button 
 is held down during the reset, it will make the CIRCUITPY drive  
-writable via USB and read-only to the code.py program.  If the button
+writable via USB and read-only to the MatrixClock program.  If the button
 is not held down during the reset, then the CIRCUITPY drive will be
 writable by the code.py program and read-only via USB.
 The DOWN button must be held down at least until the time that the
 'python' appears on the display.
 If the CIRCUITPY drive is writeable to the program (button was not
-held down during reset) then MatrixClock will log events to a file.
+held down during reset) then MatrixClock can log events to a file
+and you can save configuration changes to the defaults.json file.
 
 ### IBMPlexMono Font
 The font is from John Park's Network Connected RGB Matrix Clock project.
@@ -106,3 +110,26 @@ should be stored in the /lib directory of the CIRCUITPY drive.
 *  adafruit_esp32spi
   
 ### Operation
+
+The clock needs to be configured when first set up.  You can configure
+most of the settings in the defaults.json file, but it is easiest to
+configure the clock using a USB serial console.  MatrixClock works well
+with the serial connection in the Mu Editor.  It also works well using 
+tio (simple terminal I/O program). 
+
+
+
+
+                    - Options restored from defaults.json
+                    - Filesystem is read-only - logging disabled
+                    - Clock chip identified as DS3231
+                    - Square Wave detected on pin A2
+ 1/01/2000  0:00:29 - MatrixClock Version   3.01
+ 1/01/2000  0:00:29 - Circuitpython 6.1.0
+ 1/01/2000  0:00:29 - ESP32 firmware 1.7.1
+ 1/01/2000  0:00:29 - No network configured
+ 1/01/2000  0:00:29 - Clock started
+No Network
+
+
+
